@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>C41</title>
+  <meta name="description" content="C41 — film emulation photo editor. Classic colour, black-and-white, slide and cinema stocks, vintage camera lenses, grain, halation, light leaks and date stamps. Works offline.">
+  <meta name="theme-color" content="#0b0a09">
+  <meta name="color-scheme" content="dark">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="C41">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="icons/icon-180.png" sizes="180x180">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="modulepreload" href="js/ui.js">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div id="app" class="app is-empty">
+    <header class="topbar">
+      <button class="icon-btn" id="btn-import" type="button" aria-label="Open photo"></button>
+      <div class="topbar-title" aria-live="polite">
+        <span class="brandmark">C41</span>
+        <span class="edge-label" id="title-film"></span>
+      </div>
+      <button class="icon-btn" id="btn-compare" type="button" aria-label="Split compare" aria-pressed="false"></button>
+      <button class="btn btn-accent" id="btn-save" type="button" disabled>Save</button>
+    </header>
+
+    <main class="stage" id="stage">
+      <canvas id="view" class="view" aria-label="Photo preview"></canvas>
+      <div class="badge-original" id="badge-original" hidden>ORIGINAL</div>
+      <div class="split-handle" id="split-handle" hidden aria-hidden="true"><span class="split-knob"></span></div>
+      <div class="stage-busy" id="stage-busy" hidden><span class="spinner"></span></div>
+
+      <section class="empty" id="empty">
+        <div class="empty-frame" aria-hidden="true">
+          <div class="sprockets"></div>
+          <div class="empty-glyph"></div>
+          <div class="sprockets"></div>
+        </div>
+        <h1 class="empty-title">Load a frame</h1>
+        <p class="empty-sub">Develop your photo on classic stock. Nothing leaves your device.</p>
+        <div class="empty-actions">
+          <button class="btn btn-accent btn-lg" id="btn-choose" type="button">Choose photo</button>
+          <button class="btn btn-ghost btn-lg" id="btn-take" type="button">Take photo</button>
+        </div>
+      </section>
+
+      <section class="fatal" id="fatal" hidden>
+        <h2 class="fatal-title" id="fatal-title">Can't start</h2>
+        <p class="fatal-msg" id="fatal-msg"></p>
+      </section>
+    </main>
+
+    <section class="panel" id="panel">
+      <nav class="tabs" role="tablist" aria-label="Edit sections">
+        <button class="tab" role="tab" id="tab-film" aria-controls="pane-film" aria-selected="true" data-tab="film">Film</button>
+        <button class="tab" role="tab" id="tab-camera" aria-controls="pane-camera" aria-selected="false" data-tab="camera">Camera</button>
+        <button class="tab" role="tab" id="tab-effects" aria-controls="pane-effects" aria-selected="false" data-tab="effects">Effects</button>
+        <button class="tab" role="tab" id="tab-adjust" aria-controls="pane-adjust" aria-selected="false" data-tab="adjust">Adjust</button>
+      </nav>
+      <div class="panes">
+        <div class="pane" role="tabpanel" id="pane-film" aria-labelledby="tab-film" data-pane="film"></div>
+        <div class="pane" role="tabpanel" id="pane-camera" aria-labelledby="tab-camera" data-pane="camera" hidden></div>
+        <div class="pane" role="tabpanel" id="pane-effects" aria-labelledby="tab-effects" data-pane="effects" hidden></div>
+        <div class="pane" role="tabpanel" id="pane-adjust" aria-labelledby="tab-adjust" data-pane="adjust" hidden></div>
+      </div>
+    </section>
+  </div>
+
+  <input type="file" id="file-library" accept="image/*" hidden>
+  <input type="file" id="file-camera" accept="image/*" capture="environment" hidden>
+  <noscript><p style="color:#eee;padding:24px;font-family:system-ui">C41 needs JavaScript.</p></noscript>
+</body>
+</html>

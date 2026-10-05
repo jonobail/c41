@@ -1,0 +1,17 @@
+{
+  "name": "c41",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "C41 — film-emulation photo editor PWA (static, no build step)",
+  "scripts": {
+    "serve": "node scripts/serve.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "docs:films": "node scripts/gen-film-doc.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
+}
