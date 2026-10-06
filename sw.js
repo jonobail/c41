@@ -1,6 +1,6 @@
 // C41 service worker — versioned app-shell precache, cache-first, offline navigation fallback.
 // Bump CACHE_VERSION whenever any shell file changes so clients pick up the update.
-const CACHE_VERSION = 'c41-v6';
+const CACHE_VERSION = 'c41-v8';
 const SHELL = [
   './',
   'index.html',
@@ -24,6 +24,8 @@ const SHELL = [
   'js/match-stats.js',
   'assets/baseline-pool.bin',
   'icons/favicon.svg',
+  'icons/logo.svg',
+  'icons/logo-small.svg',
   'icons/icon-180.png',
   'icons/icon-192.png',
   'icons/icon-512.png',

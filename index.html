@@ -25,8 +25,7 @@
     <header class="topbar">
       <button class="icon-btn" id="btn-import" type="button" aria-label="Open photo"></button>
       <div class="topbar-title" aria-live="polite">
-        <span class="brandmark">C41</span>
-        <span class="edge-label" id="title-film"></span>
+        <span class="brandmark" role="img" aria-label="C41"><img class="brandmark-logo" src="icons/logo-small.svg" alt="" width="28" height="28"></span>
       </div>
       <button class="icon-btn" id="btn-compare" type="button" aria-label="Split compare" aria-pressed="false"></button>
       <button class="btn btn-accent" id="btn-save" type="button" disabled>Save</button>
@@ -39,11 +38,7 @@
       <div class="stage-busy" id="stage-busy" hidden><span class="spinner"></span></div>
 
       <section class="empty" id="empty">
-        <div class="empty-frame" aria-hidden="true">
-          <div class="sprockets"></div>
-          <div class="empty-glyph"></div>
-          <div class="sprockets"></div>
-        </div>
+        <img class="empty-logo" src="icons/logo.svg" alt="" width="132" height="132" aria-hidden="true">
         <h1 class="empty-title">Load a frame</h1>
         <p class="empty-sub">Develop your photo on classic stock. Nothing leaves your device.</p>
         <div class="empty-actions">

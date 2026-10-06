@@ -753,7 +753,8 @@ function markLook() {
 function updateTitle(look = activeLook(), modified = look ? M.looks.isLookModified(look, state) : false) {
   const f = M.films.getFilm(state.filmId);
   const filmName = `${f.brand ? f.brand + ' ' : ''}${f.name}`;
-  $('title-film').textContent = look ? `${look.name}${modified ? ' · edited' : ''}` : filmName;
+  const el = $('title-film'); // header label removed from the layout; kept null-safe
+  if (el) el.textContent = look ? `${look.name}${modified ? ' · edited' : ''}` : filmName;
 }
 
 /* ------------------------------------------------------- match a photo */
@@ -1025,8 +1026,8 @@ function scrollCardIntoView(container, el) {
 function markFilm() {
   for (const [id, { el }] of filmCards) el.setAttribute('aria-checked', String(id === state.filmId));
   if (M.looks) { updateTitle(); return; }
-  const f = film();
-  $('title-film').textContent = `${f.brand ? f.brand + ' ' : ''}${f.name}`;
+  const f = film(), el = $('title-film');
+  if (el) el.textContent = `${f.brand ? f.brand + ' ' : ''}${f.name}`;
 }
 
 function selectFilm(id) {

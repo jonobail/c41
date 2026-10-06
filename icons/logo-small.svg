@@ -5,11 +5,10 @@
       <stop offset="1" stop-color="#dc7424"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="#0d0b09"/>
-  <g transform="translate(256 256) scale(0.88) translate(-256 -256)" fill="none" stroke-linecap="butt">
+  
+  <g transform="translate(256 256) scale(1) translate(-256 -256)" fill="none" stroke-linecap="butt">
     <path d="M416.66 377.08 A206 206 0 1 1 416.66 134.92" stroke="url(#c41-amber)" stroke-width="30"/>
     <path d="M369.94 367.85 A164 164 0 1 1 369.94 144.15" stroke="#f3e7d3" stroke-width="18"/>
-    <path d="M331.27 360.02 A132 132 0 1 1 331.27 151.98" stroke="#f3e7d3" stroke-width="8"/>
     <g stroke="#f3e7d3" stroke-width="18" stroke-linejoin="miter" stroke-miterlimit="10">
       <path d="M260 304 V206 L206 270 H284" stroke-linecap="butt"/>
       <path d="M302 222 L326 206 V304" stroke-linecap="butt"/>
