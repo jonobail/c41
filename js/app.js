@@ -58,6 +58,8 @@ function defaults() {
     dust: 0, dustSeed: 1,
     dateOn: false, dateFormat: 'classic', dateColor: 'orange', date: isoDate(new Date()),
     cropOn: true, borderOn: false, flashOn: false,
+    gel: 'none',           // flash gel id (cameras.FLASH_GELS), used when the camera has flashGels
+    camMasks: {},          // per-camera format mask id (camera.masks)
     exposure: 0, contrast: 0, warmth: 0, tint: 0,
     seed: (Math.random() * 1e9) | 0,
     lookId: null,          // active look (null = none)
@@ -162,7 +164,15 @@ function film() {
   }
   return S.effFilm;
 }
-const camera = () => M.cameras.getCamera(state.cameraId);
+const camera = () => {
+  const c = M.cameras.getCamera(state.cameraId);
+  return M.cameras.effectiveCamera ? M.cameras.effectiveCamera(c, state.camMasks?.[c.id]) : c;
+};
+const gelRgb = () => {
+  const c = camera();
+  if (!c?.flashGels || !state.flashOn || !M.cameras.getGel) return null;
+  return M.cameras.getGel(state.gel).rgb;
+};
 
 /* -------------------------------------------------------------- rendering */
 
@@ -179,6 +189,7 @@ function buildParams(overrides = {}) {
     leaks: S.leaks,
     camLeaks: S.camLeaks,
     flash: state.flashOn ? 1 : 0,
+    gel: gelRgb(),
     layout: S.layout,
     dust: S.dust ? state.dust : 0,
     dateOn: !!(state.dateOn && S.date),
@@ -234,7 +245,7 @@ function ensureLeaks() {
 function ensureLayout() {
   if (!S.proxy || !M.overlays?.frameLayout) { S.layout = null; return false; }
   const f = film(), c = camera();
-  const key = `${S.fullW}x${S.fullH}|${c.id}|${f.id}|${state.cropOn}|${state.borderOn}|${state.seed}|${S.proxy.width}`;
+  const key = `${S.fullW}x${S.fullH}|${c.id}:${c.maskId || ''}|${f.id}|${state.cropOn}|${state.borderOn}|${state.seed}|${S.proxy.width}`;
   if (key === S.layoutKey && S.layout) return false;
   const L = M.overlays.frameLayout(S.fullW, S.fullH, { camera: c, film: f, crop: state.cropOn, border: state.borderOn, seed: state.seed });
   const prev = S.layout;
@@ -1030,16 +1041,28 @@ function selectFilm(id) {
 }
 
 const camCards = new Map();
-const FORMAT_LABEL = { '35mm': '35mm', 'half-frame': 'Half', '6x6': '6×6', '6x7': '6×7' };
+const FORMAT_LABEL = { '35mm': '35mm', 'half-frame': 'Half', '6x6': '6×6', '6x7': '6×7', '6x12': '6×12', '35mm-pano': 'Pano' };
+const camGroupOf = (c) => (M.cameras.cameraGroup ? M.cameras.cameraGroup(c) : 'classic');
 
 function buildCameraPane() {
   const pane = document.querySelector('[data-pane="camera"]');
+  const groups = M.cameras.GROUPS || [];
+  let grp = loadUi().camGroup || 'all';
+  if (grp !== 'all' && !groups.some((g) => g.id === grp)) grp = 'all';
+  // make sure the selected camera is visible
+  if (grp !== 'all' && state.cameraId !== 'none' && camGroupOf(M.cameras.getCamera(state.cameraId)) !== grp) grp = 'all';
+  const chips = groups.length > 1 ? new ChipGroup({
+    label: 'Camera group',
+    items: [{ id: 'all', label: 'All' }, ...groups],
+    value: grp,
+    onChange: (id) => { grp = id; applyFilter(); saveUi({ camGroup: id }); cards.scrollLeft = 0; },
+  }) : null;
   const cards = h('div', { class: 'cards', role: 'radiogroup', 'aria-label': 'Camera' });
   for (const c of M.cameras.CAMERAS) {
     const el = h('button', { class: 'card cam', type: 'button', role: 'radio', dataset: { id: c.id }, 'aria-label': `${c.brand} ${c.name}`.trim() },
       h('span', { class: 'card-thumb', html: icon(`body-${c.body || 'none'}`) },
         c.year ? h('span', { class: 'card-year', text: `’${String(c.year).slice(2)}` }) : null,
-        c.id !== 'none' ? h('span', { class: 'card-fmt', text: FORMAT_LABEL[c.format] || c.format }) : null),
+        c.id !== 'none' ? h('span', { class: 'card-fmt', text: c.badge || FORMAT_LABEL[c.format] || c.format }) : null),
       h('span', { class: 'card-brand', text: c.brand || '—' }),
       h('span', { class: 'card-name', text: c.name }),
       h('span', { class: 'card-sub', text: c.lens || 'Neutral' }));
@@ -1047,6 +1070,11 @@ function buildCameraPane() {
     camCards.set(c.id, el);
     cards.append(el);
   }
+  function applyFilter() {
+    // "No camera" stays in every group
+    for (const c of M.cameras.CAMERAS) camCards.get(c.id).hidden = !(grp === 'all' || c.id === 'none' || camGroupOf(c) === grp);
+  }
+  applyFilter();
   ctl.camAmt = new Slider({
     label: 'Lens character', min: 0, max: M.renderer?.CAM_AMT_MAX ?? 1.5, step: 0.01, value: state.camAmt, defaultValue: 1, format: pct,
     onInput: (v) => set('camAmt', v),
@@ -1057,24 +1085,76 @@ function buildCameraPane() {
     ctl[key] = new Toggle({ label, value: state[key], onChange: (v) => { state[key] = v; saveState(); markLook(); requestRender(); } });
     return ctl[key].el;
   };
+  // per-camera format masks (LC-Wide full/half/square, Belair 6×12/6×9/6×6, Diana Mini pair/square)
+  ctl.camMaskRow = h('div', { class: 'cam-opts', hidden: true });
+  // flash gels (Simple Use, Diana, La Sardina, Fisheye)
+  const gels = M.cameras.FLASH_GELS || [];
+  ctl.gel = gels.length ? new ChipGroup({
+    label: 'Flash gel', className: 'wrap',
+    items: gels.map((g) => ({ id: g.id, label: g.label, swatch: g.swatch })),
+    value: state.gel,
+    onChange: (v) => {
+      state.gel = v;
+      if (v !== 'none' && !state.flashOn) { state.flashOn = true; ctl.flashOn?.set(true); }
+      saveState(); markLook(); requestRender();
+    },
+  }) : null;
+  ctl.gelRow = h('div', { class: 'cam-opts', hidden: true }, h('div', { class: 'opts-label', text: 'Flash gel' }), ctl.gel?.el);
   pane.append(
-    h('div', { class: 'pane-label', text: 'Camera & lens' }), cards,
+    chips ? h('div', { style: { paddingTop: '2px' } }, chips.el) : h('div', { class: 'pane-label', text: 'Camera & lens' }),
+    cards,
     h('div', { class: 'row' }, ctl.camAmt.el, info),
+    ctl.camMaskRow,
     h('div', { class: 'ctl cam-toggles' },
       tog('cropOn', 'Crop to format'),
       tog('borderOn', 'Film border'),
-      tog('flashOn', 'Flash')));
+      tog('flashOn', 'Flash')),
+    ctl.gelRow);
   ctl.camCards = cards;
+  ctl.camChips = chips;
   markCamera();
+}
+
+/** Show the mask chips / gel chips the current camera supports. */
+function syncCameraOpts() {
+  const c = M.cameras.getCamera(state.cameraId);
+  if (ctl.gelRow) {
+    ctl.gelRow.hidden = !c.flashGels;
+    ctl.gel?.set(state.gel);
+  }
+  if (!ctl.camMaskRow) return;
+  const masks = Array.isArray(c.masks) ? c.masks : null;
+  ctl.camMaskRow.hidden = !masks;
+  if (!masks) { ctl.camMaskRow.replaceChildren(); ctl.camMaskKey = ''; return; }
+  const cur = camera().maskId;
+  if (ctl.camMaskKey !== c.id) {
+    ctl.camMask = new ChipGroup({
+      label: 'Format', className: 'wrap',
+      items: masks.map((m) => ({ id: m.id, label: m.label })),
+      value: cur,
+      onChange: (v) => {
+        state.camMasks = { ...(state.camMasks || {}), [c.id]: v };
+        saveState(); markLook(); requestRender();
+      },
+    });
+    ctl.camMaskRow.replaceChildren(h('div', { class: 'opts-label', text: 'Format' }), ctl.camMask.el);
+    ctl.camMaskKey = c.id;
+  } else {
+    ctl.camMask?.set(cur);
+  }
 }
 
 function markCamera() {
   for (const [id, el] of camCards) el.setAttribute('aria-checked', String(id === state.cameraId));
+  syncCameraOpts();
 }
 
 function selectCamera(id) {
   if (state.cameraId === id) return;
   state.cameraId = id;
+  // keep the picked camera visible in the group filter
+  const want = id === 'none' ? null : camGroupOf(M.cameras.getCamera(id));
+  if (ctl.camChips && want && ctl.camChips.value !== 'all' && ctl.camChips.value !== want) ctl.camChips.buttons.get('all')?.click();
   markCamera();
   markLook();
   saveState();
@@ -1236,7 +1316,7 @@ function openFilmInfo() {
 
 function openCameraInfo() {
   const c = camera();
-  const bodyName = { slr: 'SLR', rangefinder: 'Rangefinder', compact: 'Compact', medium: 'Medium format', toy: 'Toy camera', none: 'None' }[c.body] || c.body;
+  const bodyName = { slr: 'SLR', rangefinder: 'Rangefinder', compact: 'Compact', medium: 'Medium format', toy: 'Toy camera', fisheye: 'Fisheye', multilens: 'Multi-lens', pano: 'Panoramic', spinner: 'Rotating panoramic', none: 'None' }[c.body] || c.body;
   const body = h('div', {},
     h('div', { class: 'info-kicker' }, c.brand ? h('span', { text: c.brand }) : null, c.year ? h('span', { text: String(c.year) }) : null, c.format ? h('span', { text: c.format }) : null),
     h('p', { class: 'info-summary', text: c.summary || '' }),

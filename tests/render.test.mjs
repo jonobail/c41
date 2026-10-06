@@ -1,19 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CAMERAS, DEFAULT_CAMERA_ID, getCamera } from '../js/cameras.js';
+import { CAMERAS, DEFAULT_CAMERA_ID, getCamera, effectiveCamera, FLASH_GELS, getGel, GROUPS, cameraGroup } from '../js/cameras.js';
 import { makeLeaks, mulberry32, frameLayout, instantType } from '../js/overlays.js';
 import { planExport, PAD as EXPORT_PAD } from '../js/exporter.js';
-import { lensReach, lensUniforms, CAM_AMT_MAX } from '../js/renderer.js';
+import { lensReach, lensUniforms, CAM_AMT_MAX, remapGeometry, remapSourceRect, fishPoint, GRID_MAX } from '../js/renderer.js';
+import { remapStripSource } from '../js/exporter.js';
 
 const RANGES = {
   vignette: [0, 1.5], vignetteHardness: [2, 4], sharpness: [-1, 1], cornerSoft: [0, 1],
   ca: [0, 1], contrast: [-0.3, 0.3], warmth: [-0.1, 0.1], bloom: [0, 1], flare: [0, 1],
   vignetteWobble: [0, 1], vigSat: [0, 1], clarity: [-0.6, 0.6], sweetSpot: [0, 0.9],
   blurShape: [-1, 1], distortion: [-0.1, 0.1], sat: [-0.3, 0.3], veil: [0, 0.1],
-  tint: [-0.1, 0.1], flash: [0, 1], leak: [0, 1],
+  tint: [-0.1, 0.1], flash: [0, 1], leak: [0, 1], vigAxis: [0, 1], banding: [0, 1], swirl: [0, 1],
 };
 const ZERO_EXEMPT = ['vignetteHardness', 'sweetSpot', 'flash'];
-const BODIES = ['slr', 'rangefinder', 'compact', 'medium', 'toy', 'none'];
+const BODIES = ['slr', 'rangefinder', 'compact', 'medium', 'toy', 'fisheye', 'multilens', 'pano', 'spinner', 'none'];
 
 test('cameras: none first, all zero', () => {
   assert.equal(CAMERAS[0].id, 'none');
@@ -53,8 +54,8 @@ test('cameras: schema, ranges, unique ids', () => {
   assert.equal(getCamera('holga-120n').formatScale, 1.8);
   assert.equal(getCamera('olympus-pen-f').formatScale, 0.7);
   for (const c of CAMERAS) {
-    assert.ok(c.aspect === null || (c.aspect >= 1 && c.aspect <= 2), `${c.id}.aspect`);
-    assert.ok(['135', 'half', '120', 'holga'].includes(c.frame), `${c.id}.frame`);
+    assert.ok(c.aspect === null || (c.aspect >= 1 && c.aspect <= 2.2), `${c.id}.aspect`);
+    assert.ok(['135', 'half', '120', 'holga', 'sprocket'].includes(c.frame), `${c.id}.frame`);
     const o = c.params.vignetteOffset;
     assert.ok(Array.isArray(o) && o.length === 2 && o.every((v) => Math.abs(v) <= 0.3), `${c.id}.vignetteOffset`);
     assert.ok(['edge', 'holga'].includes(c.params.leakBias), `${c.id}.leakBias`);
@@ -67,7 +68,7 @@ test('cameras: schema, ranges, unique ids', () => {
 
 test('cameras are distinguishable: no two presets share the same look parameters', () => {
   const keys = Object.keys(RANGES).filter((k) => k !== 'flash');
-  const sig = (c) => JSON.stringify([c.aspect, c.frame, ...keys.map((k) => c.params[k])]);
+  const sig = (c) => JSON.stringify([c.aspect, c.frame, c.grid, c.fisheye, ...keys.map((k) => c.params[k])]);
   const seen = new Map();
   for (const c of CAMERAS) {
     assert.ok(!seen.has(sig(c)), `${c.id} duplicates ${seen.get(sig(c))}`);
@@ -262,4 +263,158 @@ test('makeLeaks prism: warm on one edge, mint/teal on the opposite, deterministi
     assert.ok(warm[0].color[0] > 0.9 && warm[0].color[2] > 0.25, 'pink-orange');
   }
   assert.deepEqual([...sides].sort(), [0, 1], 'seed varies which edge is warm');
+});
+
+test('Lomography cameras: ids, group, capabilities', () => {
+  const lomo = CAMERAS.filter((c) => c.brand === 'Lomography');
+  assert.ok(lomo.length >= 12);
+  for (const c of lomo) {
+    assert.ok(c.id.startsWith('lomo-'), c.id);
+    assert.equal(cameraGroup(c), 'lomo');
+  }
+  assert.equal(cameraGroup(getCamera('canon-ae1')), 'classic');
+  assert.deepEqual(GROUPS.map((g) => g.id), ['classic', 'lomo']);
+  // the original LC-A keeps its id (looks / saved state refer to it)
+  assert.equal(getCamera('lomo-lca').brand, 'Lomo');
+  for (const c of CAMERAS) {
+    if (c.grid) {
+      const n = c.grid.cols * c.grid.rows;
+      assert.ok(n >= 2 && n <= GRID_MAX, `${c.id} grid size`);
+      assert.ok(c.grid.shift >= 0 && c.grid.shift <= 0.25 && (c.grid.expoJitter ?? 0) <= 0.5, `${c.id} grid jitter`);
+    }
+    if (c.fisheye) assert.ok(c.fisheye.radius > 0.8 && c.fisheye.radius < 1.4);
+    if (c.mask) assert.equal(c.mask.type, 'rounded');
+    if (c.masks) {
+      for (const m of c.masks) assert.ok(m.id && m.label && m.aspect >= 1 && m.aspect <= 2.2, `${c.id} mask ${m.id}`);
+      assert.equal(effectiveCamera(c, 'nope').maskId, c.masks[0].id, 'unknown mask → first');
+    }
+  }
+  assert.equal(getCamera('lomo-sprocket-rocket').frame, 'sprocket');
+  assert.equal(getCamera('lomo-belair-6-12').aspect, 2);
+  const lcw = getCamera('lomo-lc-wide');
+  assert.equal(effectiveCamera(lcw, 'square').aspect, 1);
+  assert.equal(effectiveCamera(lcw, 'half').frame, 'half');
+  assert.equal(effectiveCamera(getCamera('lomo-diana-mini'), 'square').grid, null);
+  assert.equal(effectiveCamera(getCamera('leica-m6'), 'x'), getCamera('leica-m6'), 'no masks → same object');
+  assert.equal(getGel('none').rgb, null);
+  assert.equal(getGel('bogus').id, 'none');
+  for (const g of FLASH_GELS.slice(1)) assert.ok(g.rgb.length === 3 && Math.max(...g.rgb) === 1);
+});
+
+test('frameLayout: sprocket exposure, pano minimum, rounded mask (with and without border)', () => {
+  const film = { id: 'kodak-portra-800', brand: 'Kodak', name: 'Portra 800', process: 'C-41', params: {} };
+  let f = frameLayout(4032, 3024, { camera: getCamera('lomo-sprocket-rocket'), film, crop: true });
+  assert.ok(Math.abs(f.crop[2] / f.crop[3] - 2.06) < 1e-6);
+  assert.equal(f.mask, 'sprocket');
+  assert.equal(typeof f.draw, 'function', 'sprockets are on the picture: drawn without a border');
+  assert.deepEqual(f.inner, [0, 0]);
+  assert.deepEqual(f.out, [f.crop[2], f.crop[3]]);
+  f = frameLayout(4032, 3024, { camera: getCamera('lomo-sprocket-rocket'), film, crop: true, border: true });
+  assert.equal(f.style, 'sprocket');
+  assert.ok(f.inner[1] > 0 && f.inner[1] < 0.05 * f.crop[3], 'thin scanner margin only');
+  // Spinner: an ordinary photo is cut to 4.3:1, a phone panorama keeps its aspect
+  f = frameLayout(4032, 3024, { camera: getCamera('lomo-spinner-360'), film, crop: true });
+  assert.ok(Math.abs(f.crop[2] / f.crop[3] - 4.3) < 1e-6);
+  f = frameLayout(12000, 2000, { camera: getCamera('lomo-spinner-360'), film, crop: true });
+  assert.deepEqual(f.crop, [0, 0, 12000, 2000]);
+  f = frameLayout(3024, 4032, { camera: getCamera('lomo-spinner-360'), film, crop: true });
+  assert.ok(Math.abs(f.crop[3] / f.crop[2] - 4.3) < 1e-6, 'portrait follows the photo');
+  // rounded mask
+  f = frameLayout(3000, 3000, { camera: getCamera('lomo-diana-f-plus'), film, crop: true });
+  assert.equal(f.mask, 'rounded');
+  assert.equal(typeof f.draw, 'function');
+  f = frameLayout(3000, 3000, { camera: getCamera('lomo-lc-a-120'), film, crop: true, border: true });
+  assert.equal(f.style, '120');
+  assert.equal(f.mask, 'rounded');
+  // ordinary cameras: unchanged
+  f = frameLayout(3000, 2000, { camera: getCamera('leica-m6'), film, crop: true });
+  assert.equal(f.draw, null);
+  assert.equal(f.mask, null);
+});
+
+test('remapGeometry: grids cover-fit the whole photo, shifts stay inside, deterministic', () => {
+  const img = [4032, 3024];
+  for (const id of ['lomo-actionsampler', 'lomo-supersampler', 'lomo-oktomat', 'lomo-diana-mini']) {
+    const cam = getCamera(id);
+    for (const [W, H] of [[4032, 3024], [3024, 4032]]) {
+      const L = frameLayout(W, H, { camera: cam, crop: true });
+      const G = remapGeometry(cam, [W, H], L.crop, 77);
+      assert.equal(G.mode, 1);
+      assert.deepEqual(G, remapGeometry(cam, [W, H], L.crop, 77));
+      assert.notDeepEqual(G.cells, remapGeometry(cam, [W, H], L.crop, 78).cells, 'seeded');
+      assert.equal(G.cells.length, G.cols * G.rows);
+      if (W < H) assert.ok(G.rows >= G.cols || G.cols === G.rows, `${id} portrait swaps the grid`);
+      for (const c of G.cells) {
+        // the cell's view must lie inside the image (no smeared edge pixels)
+        const x0 = c.b[0], y0 = c.b[1], x1 = c.b[0] + G.S[0] * c.m, y1 = c.b[1] + G.S[1] * c.m;
+        assert.ok(x0 >= -1e-6 && y0 >= -1e-6 && x1 <= W + 1e-6 && y1 <= H + 1e-6 || cam.grid.fit === 'split', `${id} cell in image`);
+        assert.ok(Math.abs(c.expo) <= cam.grid.expoJitter + 1e-9);
+      }
+      // resolution independence: half-size geometry is the same picture
+      const G2 = remapGeometry(cam, [W / 2, H / 2], L.crop.map((v) => v / 2), 77);
+      G2.cells.forEach((c, i) => {
+        assert.ok(Math.abs(c.m - G.cells[i].m) < 1e-9);
+        assert.ok(Math.abs(c.b[0] * 2 - G.cells[i].b[0]) < 1e-6);
+      });
+    }
+  }
+  assert.equal(remapGeometry(getCamera('leica-m6'), img, [0, 0, 4032, 3024]), null);
+});
+
+test('remapSourceRect: covers every sampled source point of a strip (grid + fisheye)', () => {
+  const W = 4032, H = 3024;
+  for (const id of ['lomo-actionsampler', 'lomo-oktomat', 'lomo-supersampler', 'lomo-fisheye-no2', 'lomo-diana-mini']) {
+    const cam = getCamera(id);
+    const L = frameLayout(W, H, { camera: cam, crop: true });
+    const G = remapGeometry(cam, [W, H], L.crop, 5);
+    const [Fw, Fh] = [L.crop[2], L.crop[3]];
+    const map = (x, y) => {
+      if (G.mode === 2) return fishPoint(G, x, y).slice(0, 2);
+      const i = Math.min(G.cols - 1, Math.floor(x / G.S[0])), j = Math.min(G.rows - 1, Math.floor(y / G.S[1]));
+      const c = G.cells[j * G.cols + i];
+      return [c.b[0] + (x - i * G.S[0]) * c.m, c.b[1] + (y - j * G.S[1]) * c.m];
+    };
+    for (const [y0, y1] of [[0, 300], [700, 1100], [Fh / 2 - 100, Fh / 2 + 150], [Fh - 250, Fh]]) {
+      const r = remapSourceRect(G, [0, y0, Fw, y1], 0);
+      assert.ok(r && r.jMin > 0, `${id} rect`);
+      for (let k = 0; k < 400; k++) {
+        const x = (k * 0.618034 % 1) * Fw, y = y0 + ((k * 0.414214) % 1) * (y1 - y0);
+        const [ix, iy] = map(x, y);
+        assert.ok(ix >= r.rect[0] - 1 && ix <= r.rect[2] + 1 && iy >= r.rect[1] - 1 && iy <= r.rect[3] + 1,
+          `${id} strip ${y0}-${y1}: (${x.toFixed(0)},${y.toFixed(0)}) → (${ix.toFixed(0)},${iy.toFixed(0)}) outside ${r.rect.map(Math.round)}`);
+      }
+    }
+  }
+});
+
+test('remapStripSource: aligned, in bounds, downsampled only where the remap minifies', () => {
+  const W = 4032, H = 3024;
+  const lim = { maxTexture: 16384, maxRenderbuffer: 16384, maxViewport: [16384, 16384] };
+  for (const id of ['lomo-actionsampler', 'lomo-fisheye-no2', 'lomo-supersampler']) {
+    const cam = getCamera(id);
+    const L = frameLayout(W, H, { camera: cam, crop: true, border: true, film: { id: 'x', name: 'X' } });
+    const G = planExport(W, H, lim, L, 0);
+    const RG = remapGeometry(cam, G.img, G.crop, 3);
+    for (let y0 = 0; y0 < G.outH; y0 += 512) {
+      const R = remapStripSource(G, RG, y0, Math.min(512, G.outH - y0), 20);
+      assert.ok(R.x >= 0 && R.y >= 0 && R.x + R.w <= Math.round(G.img[0]) && R.y + R.h <= Math.round(G.img[1]), `${id} in bounds`);
+      assert.equal(R.x % 32, 0); assert.equal(R.y % 32, 0);
+      assert.ok(R.texK > 0 && R.texK <= 1 && Math.log2(R.texK) % 1 === 0, 'power-of-two texK');
+      assert.ok(R.w * R.h * R.texK * R.texK <= 16e6 + 1);
+      if (RG.mode === 1) {
+        const mMin = Math.min(...RG.cells.map((c) => c.m));
+        assert.ok(R.texK * mMin >= 1 - 1e-9 && R.texK * mMin < 2, 'downsampled only as far as the cells minify');
+      }
+      if (id === 'lomo-fisheye-no2') assert.equal(R.texK, 1);
+    }
+  }
+});
+
+test('lensReach: grids measure the lens per cell', () => {
+  const as = getCamera('lomo-actionsampler');
+  const flat = { ...as, grid: null };
+  assert.ok(lensReach(as, 1, 4000, 3000) < lensReach(flat, 1, 4000, 3000));
+  const u = lensUniforms(getCamera('lomo-spinner-360'), 1);
+  assert.equal(u.vigAxis, 1);
+  assert.ok(u.band > 0);
 });

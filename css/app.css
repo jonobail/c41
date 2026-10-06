@@ -588,6 +588,15 @@ button {
 .card.cam[aria-checked="true"] .card-fmt { color: var(--accent); border-color: currentColor; }
 .cam-toggles { margin-top: 6px; }
 .cam-toggles .toggle-row + .toggle-row { border-top: 1px solid var(--line); }
+/* per-camera options: format masks, flash gels */
+.cam-opts { display: grid; gap: 6px; padding: 6px 16px 4px; }
+.cam-opts .chips.wrap { gap: 6px; }
+.opts-label {
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
 
 /* Looks */
 .card-wrap { flex: none; position: relative; scroll-snap-align: start; }

@@ -30,6 +30,11 @@ export const ICONS = {
   'body-compact': S('<rect x="4" y="10" width="40" height="22" rx="7"/><circle cx="28" cy="21" r="6"/><circle cx="28" cy="21" r="2.6"/><rect x="9" y="14" width="7" height="4" rx="1"/><path d="M36 7h5"/><circle cx="12" cy="25" r="1.2"/>', '0 0 48 40'),
   'body-medium': S('<rect x="9" y="12" width="30" height="24" rx="2"/><path d="M13 12V5h22v7"/><circle cx="24" cy="25" r="7"/><circle cx="24" cy="25" r="3.5"/><path d="M39 18h4M5 18h4"/>', '0 0 48 40'),
   'body-toy': S('<rect x="6" y="12" width="36" height="21" rx="4"/><circle cx="24" cy="22.5" r="8"/><circle cx="24" cy="22.5" r="4.5"/><path d="M14 12l3-5h14l3 5"/><circle cx="36" cy="16" r="1.4"/>', '0 0 48 40'),
+  // Lomography-type bodies
+  'body-fisheye': S('<rect x="5" y="12" width="38" height="21" rx="5"/><circle cx="24" cy="22.5" r="9.5"/><path d="M17.5 17.5a9 9 0 0 1 6.5-4"/><circle cx="24" cy="22.5" r="4.6"/><rect x="9" y="15" width="5" height="3.5" rx="1"/><path d="M34 9h5"/>', '0 0 48 40'),
+  'body-multilens': S('<rect x="5" y="10" width="38" height="24" rx="4"/><circle cx="19" cy="17.5" r="3.4"/><circle cx="29" cy="17.5" r="3.4"/><circle cx="19" cy="26.5" r="3.4"/><circle cx="29" cy="26.5" r="3.4"/><path d="M34 7h5"/><circle cx="38.5" cy="14" r="1.2"/>', '0 0 48 40'),
+  'body-pano': S('<rect x="2.5" y="13" width="43" height="18" rx="4"/><circle cx="24" cy="22" r="5.5"/><circle cx="24" cy="22" r="2.4"/><path d="M6 10h4M38 10h4"/><circle cx="8" cy="17" r="1.6"/><circle cx="40" cy="17" r="1.6"/>', '0 0 48 40'),
+  'body-spinner': S('<rect x="10" y="7" width="28" height="17" rx="4"/><circle cx="24" cy="15.5" r="4.5"/><circle cx="24" cy="15.5" r="1.9"/><path d="M20 24l-1.5 11h11L28 24"/><path d="M7 30.5a20 5.5 0 0 0 34 0"/><path d="M38 28.6l3 1.9-3.4 1.2"/>', '0 0 48 40'),
   'body-none': S('<rect x="6" y="9" width="36" height="24" rx="2.5" stroke-dasharray="3 3"/><path d="M17 21h14"/>', '0 0 48 40'),
 };
 

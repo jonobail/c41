@@ -357,11 +357,16 @@ function biasedLeaks(seed, bias) {
 //                                   related is defined relative to this rect
 //     inner: [l, t],                where the frame sits inside the output (px, full-res units)
 //     out: [w, h],                  output size incl. border (px, full-res units; round × scale)
-//     style: null | '135' | 'half' | '120' | 'holga' | 'polaroid' | 'instax',
+//     style: null | '135' | 'half' | '120' | 'holga' | 'sprocket' | 'polaroid' | 'instax',
 //     filmBorder: bool,             border is film (grain/leaks continue onto it) vs paper
+//     mask: null | 'sprocket' | 'rounded',   in-picture mask (drawn with or without a border)
 //     draw: null | (ctx, ox, oy, k) => void }
 // draw() paints the border into a 2D context whose pixel (0,0) is output pixel (ox, oy) at
 // k output px per full-res px. Opaque where the border is, transparent over the picture.
+// In-picture masks are part of the negative, so they are drawn even without a border:
+//   'sprocket' (camera.frame 'sprocket'): the frame's short side is the full 35 mm film width —
+//              black KS perforations + edge print are painted OVER the picture;
+//   'rounded'  (camera.mask): soft black rounded corners with a moulded-plastic wobble.
 // Resolution independent and deterministic: preview and every export strip draw the same thing.
 
 export function instantType(film) {
@@ -385,6 +390,8 @@ const ROLL = {
   half: { across: 24, side: 6.2, end: 2.0, filmEdge: 5.5 },
   120: { across: 56, side: 3.8, end: 3.4, filmEdge: 2.6 },
   holga: { across: 56, side: 5.4, end: 5.0, filmEdge: 2.6 },
+  // picture spans the whole 35 mm width: the border is only the scanner holder
+  sprocket: { across: 35, side: 1.1, end: 2.2, filmEdge: 0 },
 };
 
 export function frameLayout(W, H, { camera = null, film = null, crop = false, border = false, seed = 1 } = {}) {
@@ -392,6 +399,11 @@ export function frameLayout(W, H, { camera = null, film = null, crop = false, bo
   const inst = instantType(film);
   const land = W >= H;
   let aspect = inst ? INSTANT[inst].aspect : (camera && camera.aspect) || null;
+  // panoramic minimum (Spinner): a phone pano keeps its own aspect, a normal photo is cut down
+  if (!inst && !aspect && camera && camera.minAspect > 1) {
+    const own = Math.max(W, H) / Math.min(W, H);
+    if (own < camera.minAspect) aspect = camera.minAspect;
+  }
   let cr = [0, 0, W, H];
   if (crop && aspect) {
     const a = land ? aspect : 1 / aspect;
@@ -400,8 +412,26 @@ export function frameLayout(W, H, { camera = null, film = null, crop = false, bo
     cr = [(W - cw) / 2, (H - ch) / 2, cw, ch];
   }
   const [, , cw, ch] = cr;
-  const L = { full: [W, H], crop: cr, inner: [0, 0], out: [cw, ch], style: null, filmBorder: false, draw: null };
-  if (!border) return L;
+  const L = { full: [W, H], crop: cr, inner: [0, 0], out: [cw, ch], style: null, filmBorder: false, mask: null, draw: null };
+  const pinfo = () => ({
+    label: filmLabel(film), ink: edgeInk(film), frameNo: 1 + Math.floor(mulberry32((seed >>> 0) ^ 0x51f7)() * 35),
+    seed: seed >>> 0,
+  });
+  const maskOf = () => {
+    if (inst || !camera) return null;
+    if (camera.frame === 'sprocket') return 'sprocket';
+    if (camera.mask && camera.mask.type === 'rounded') return 'rounded';
+    return null;
+  };
+  if (!border) {
+    L.mask = maskOf();
+    if (L.mask) {
+      const I = pinfo();
+      L.filmBorder = true;
+      L.draw = (ctx, ox, oy, k) => drawPictureMask(ctx, ox, oy, k, L, I, camera);
+    }
+    return L;
+  }
 
   const short = Math.min(cw, ch);
   if (inst) {
@@ -420,14 +450,128 @@ export function frameLayout(W, H, { camera = null, film = null, crop = false, bo
   const mm = acrossPx / geo.across;
   const side = geo.side * mm, end = geo.end * mm;
   const l = acrossVertical ? end : side, t = acrossVertical ? side : end;
-  Object.assign(L, { inner: [l, t], out: [cw + 2 * l, ch + 2 * t], style, filmBorder: true });
-  const info = {
-    geo, mm, acrossVertical, notch: !!(camera && camera.notch),
-    label: filmLabel(film), ink: edgeInk(film), frameNo: 1 + Math.floor(mulberry32((seed >>> 0) ^ 0x51f7)() * 35),
-    seed: seed >>> 0,
+  Object.assign(L, { inner: [l, t], out: [cw + 2 * l, ch + 2 * t], style, filmBorder: true, mask: maskOf() });
+  const info = { geo, mm, acrossVertical, notch: !!(camera && camera.notch), ...pinfo() };
+  L.draw = (ctx, ox, oy, k) => {
+    drawRoll(ctx, ox, oy, k, L, info);
+    if (L.mask) drawPictureMask(ctx, ox, oy, k, L, info, camera);
   };
-  L.draw = (ctx, ox, oy, k) => drawRoll(ctx, ox, oy, k, L, info);
   return L;
+}
+
+// In-picture masks (see frameLayout). Same coordinate contract as drawRoll.
+function drawPictureMask(ctx, ox, oy, k, L, I, camera) {
+  const [l, t] = L.inner, cw = L.crop[2], ch = L.crop[3];
+  if (L.mask === 'rounded') {
+    drawRoundedMask(ctx, ox, oy, k, l, t, cw, ch, camera.mask, I.seed);
+    return;
+  }
+  // sprocket exposure: local film coords u along the film (0..A), v across (0..C = 35 mm)
+  const acrossVertical = cw >= ch;
+  const A = acrossVertical ? cw : ch, C = acrossVertical ? ch : cw;
+  const mm = C / 35;
+  ctx.save();
+  ctx.setTransform(k, 0, 0, k, -ox, -oy);
+  if (acrossVertical) ctx.transform(1, 0, 0, 1, l, t);
+  else ctx.transform(0, -1, 1, 0, l, t + ch);
+  ctx.beginPath();
+  ctx.rect(0, 0, A, C);
+  ctx.clip();
+  const rnd = mulberry32(I.seed ^ 0x5b0c);
+  // KS perforations, 2.0 mm in from each film edge; opaque black on the print (unexposed base)
+  const pitch = 4.75 * mm, pw = 1.98 * mm, ph = 2.79 * mm, edge = 2.0 * mm;
+  const phase = rnd() * pitch;
+  ctx.fillStyle = '#050404';
+  ctx.beginPath();
+  for (let u = -pitch + phase; u < A + pitch; u += pitch) {
+    rrect(ctx, u, edge, pw, ph, 0.5 * mm);
+    rrect(ctx, u, C - edge - ph, pw, ph, 0.5 * mm);
+  }
+  ctx.fill();
+  // a slightly darker, softer rim round each hole (light scattered off the perforation edge)
+  ctx.strokeStyle = 'rgba(5,4,4,0.35)';
+  ctx.lineWidth = 0.35 * mm;
+  ctx.stroke();
+  // edge print: pre-exposed latent image between the holes and the film edge, OVER the picture
+  const font = (h) => `600 ${h}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  const text = (str, u, v, h, alpha) => {
+    ctx.font = font(h);
+    ctx.textBaseline = 'middle';
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = I.ink.glow;
+    ctx.shadowBlur = 0.3 * mm * k;
+    ctx.fillStyle = I.ink.ink;
+    ctx.fillText(str, u, v);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  };
+  const vTop = edge * 0.5, vBot = C - edge * 0.5, th = 1.2 * mm, n = I.frameNo;
+  for (let u = A * 0.04 - (A * 0.5) * (rnd() * 0.3); u < A; u += A * 0.5) text(I.label, u, vTop, th, 0.85);
+  text(`${n}`, A * 0.36, vTop, th, 0.85);
+  text(`${n + 1}`, A * 0.86, vTop, th, 0.85);
+  text(`\u25B6${n}A`, A * 0.08, vBot, th, 0.85);
+  text(`${n + 1}`, A * 0.36, vBot, th * 1.1, 0.85);
+  text(`\u25B6${n + 1}A`, A * 0.58, vBot, th, 0.85);
+  text(`${n + 2}`, A * 0.9, vBot, th * 1.1, 0.85);
+  ctx.fillStyle = I.ink.ink;
+  ctx.globalAlpha = 0.8;
+  for (const u0 of [A * 0.16, A * 0.68]) {
+    let u = u0;
+    const bh = 1.05 * mm;
+    for (let i = 0; i < 18; i++) {
+      const w = (rnd() < 0.5 ? 0.32 : 0.62) * mm;
+      if (i % 2 === 0) ctx.fillRect(u, vBot - bh / 2, w, bh);
+      u += w + 0.28 * mm;
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// Rounded black mask outside a wobbly rounded rectangle. The feather is built from N nested
+// layers added with 'lighter' (alpha = covered layers / N) — deterministic and identical in the
+// preview and in every export strip (no canvas blur / shadow involved).
+function drawRoundedMask(ctx, ox, oy, k, l, t, cw, ch, m, seed) {
+  const s = Math.min(cw, ch);
+  const inset = (m.inset ?? 0.02) * s, rc = (m.radius ?? 0.07) * s;
+  const feather = Math.max(1e-6, (m.feather ?? 0.004) * s), wob = (m.wobble ?? 0) * s;
+  const nz = edgeNoise((seed * 13 + 0x7a11) >>> 0);
+  const pts = [];
+  const per = 2 * (cw + ch);
+  // perimeter of the base rounded rect (inset 0), with outward normals
+  const edgeN = 48, arcN = 14;
+  const x0 = l, y0 = t, x1 = l + cw, y1 = t + ch;
+  const seg = (ax, ay, bx, by, nx, ny) => {
+    for (let i = 0; i < edgeN; i++) { const f = i / edgeN; pts.push([ax + (bx - ax) * f, ay + (by - ay) * f, nx, ny]); }
+  };
+  const arc = (cx, cy, a0) => {
+    for (let i = 0; i < arcN; i++) {
+      const a = a0 + (i / arcN) * Math.PI / 2;
+      pts.push([cx + Math.cos(a) * rc, cy + Math.sin(a) * rc, Math.cos(a), Math.sin(a)]);
+    }
+  };
+  seg(x0 + rc, y0, x1 - rc, y0, 0, -1); arc(x1 - rc, y0 + rc, -Math.PI / 2);
+  seg(x1, y0 + rc, x1, y1 - rc, 1, 0); arc(x1 - rc, y1 - rc, 0);
+  seg(x1 - rc, y1, x0 + rc, y1, 0, 1); arc(x0 + rc, y1 - rc, Math.PI / 2);
+  seg(x0, y1 - rc, x0, y0 + rc, -1, 0); arc(x0 + rc, y0 + rc, Math.PI);
+  const N = 10;
+  ctx.save();
+  ctx.setTransform(k, 0, 0, k, -ox, -oy);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = `rgba(4,3,3,${1 / N})`;
+  for (let j = 0; j < N; j++) {
+    const d = inset + feather * ((j + 0.5) / N * 2 - 1);
+    ctx.beginPath();
+    ctx.rect(x0 - 2, y0 - 2, cw + 4, ch + 4);
+    pts.forEach(([x, y, nx, ny], i) => {
+      const w = wob * nz((i / pts.length) * 6.283 * (per / s) * 0.25);
+      const px = x - nx * (d + w), py = y - ny * (d + w);
+      if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+    });
+    ctx.closePath();
+    ctx.fill('evenodd');
+  }
+  ctx.restore();
 }
 
 function filmLabel(film) {
@@ -535,7 +679,7 @@ function drawRoll(ctx, ox, oy, k, L, I) {
     ctx.shadowBlur = 0;
   } else {
     ctx.beginPath();
-    rrect(ctx, 0, 0, A, C, (L.style === '120' ? 0.5 : 0.3) * mm);
+    rrect(ctx, 0, 0, A, C, (L.style === '120' ? 0.5 : L.style === 'sprocket' ? 0 : 0.3) * mm);
     ctx.fill();
     if (I.notch) {
       // Hasselblad film-back notches: small V cut-outs on one frame edge
@@ -564,7 +708,9 @@ function drawRoll(ctx, ox, oy, k, L, I) {
     ctx.globalAlpha = 1;
   };
   const n = I.frameNo;
-  if (L.style === '135' || L.style === 'half') {
+  if (L.style === 'sprocket') {
+    // perforations + edge print are on the picture (drawPictureMask)
+  } else if (L.style === '135' || L.style === 'half') {
     // KS perforations: 1.98 mm along × 2.79 mm across, pitch 4.75 mm, 0.71 mm from the picture
     const pitch = 4.75 * mm, pw = 1.98 * mm, ph = 2.79 * mm, gap = 0.71 * mm;
     const phase = rnd() * pitch;

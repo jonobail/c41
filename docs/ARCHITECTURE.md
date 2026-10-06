@@ -112,6 +112,7 @@ every feature on (Node, x86); compile 1–8 ms.
   densityHue: null,         // { band: multiplier 0..3 } hue weighting of density (HSL band names, default 1)
   chromaCurve: null,        // [5] sat multipliers at luma 0, .25, .5, .75, 1 (piecewise linear, × sat)
   lumaLock: false,          // true: luma-preserving colour stages (recommended for fitted films)
+  hueKeep: null,            // { band: [hueShiftDeg, chromaMul] } keyed by SCENE (input) hue — see below
   // spatial (NOT in the LUT; read by the renderer)
   grain: { amount: 0.3, size: 1, color: 0.3 },   // amount 0..1; size 1 = ISO-400-ish 35mm; color 0 mono..1
   halation: { amount: 0.05, color: [1, 0.35, 0.15] },
@@ -167,6 +168,14 @@ luma-preserving gamut compress runs before `fade`. Without it, `hsl` keeps the l
 behaviour (e.g. desaturating at fixed V brightens). With `lumaLock`, grey-ramp luma is
 monotonic for **any** params within the FIT_SPEC bounds (fuzz-tested); without it that holds only
 for the tone/cast stages. Fitted films should set `lumaLock: true`.
+
+**`hueKeep`** (colour only) is the one colour control keyed by the **scene's** hue (the linear
+input, weighted in by input HSV saturation 0.1→0.35) rather than the post-cast hue. Right after the
+tone/cast stages it rotates (`hueShiftDeg`) and scales (`chromaMul`) the pixel's chroma *relative to
+the film's neutral at that luma*, at constant luma, then pulls any out-of-gamut result toward luma.
+A strong cast can collapse e.g. a blue sky into the neutral, where `hsl` (classified post-cast and
+faded near the neutral) can no longer reach it; `hueKeep` can. "Match a photo" uses it to keep hues
+the reference doesn't show (skies, foliage) from being dragged into the reference's cast.
 
 ### Fitting helpers
 
@@ -224,12 +233,27 @@ Instax Mini.
 ```js
 export const CAMERAS = [ {
   id: 'canon-ae1', name: 'AE-1', brand: 'Canon', year: 1976, lens: 'FD 50mm f/1.8',
-  body: 'slr',          // 'slr' | 'rangefinder' | 'compact' | 'medium' | 'toy' | 'none' (UI icon)
-  format: '35mm', formatScale: 1,   // '35mm'|'half-frame'|'6x6'|'6x7'; grain size divides by formatScale
-  aspect: 1.5,          // frame long/short (half-frame 4/3, 6x6 1, 6x7 1.25); null = photo's own aspect.
-                        // "Crop to format" crops to it in the PHOTO's orientation.
-  frame: '135',         // "Film border" style: '135' | 'half' | '120' | 'holga'
+  body: 'slr',          // UI icon: 'slr' | 'rangefinder' | 'compact' | 'medium' | 'toy' | 'fisheye' |
+                        //          'multilens' | 'pano' | 'spinner' | 'none'
+  format: '35mm', formatScale: 1,   // '35mm'|'half-frame'|'6x6'|'6x7'|'6x12'|'35mm-pano'; grain size ÷ formatScale
+  badge: null,          // optional card badge text instead of the format label ('2×2', 'Circle', '360°')
+  aspect: 1.5,          // frame long/short (half-frame 4/3, 6x6 1, 6x7 1.25, 6x12 2, 35mm-pano 2.06);
+                        // null = photo's own aspect. "Crop to format" crops to it in the PHOTO's orientation.
+  minAspect: null,      // with aspect null: crop to at least this (Spinner 4.3; a phone pano keeps its own)
+  frame: '135',         // "Film border" style: '135' | 'half' | '120' | 'holga' | 'sprocket'
+                        // ('sprocket' = picture across the full 35 mm width, perforations ON the picture)
   notch: false,         // Hasselblad film-back notches on the 120 border
+  mask: null,           // in-picture mask, always drawn: { type:'rounded', inset, radius, feather, wobble }
+                        // (fractions of the frame short edge; Diana F+, LC-A 120)
+  flashGels: false,     // UI offers flash gels (RenderParams.gel)
+  masks: null,          // switchable formats [{ id, label, aspect, formatScale?, format?, frame?, grid?, badge? }]
+                        // (first = default); effectiveCamera(camera, maskId) applies one
+  grid: null,           // multi-lens grid → renderer remap mode 1 (see §6):
+                        // { cols, rows (landscape; swapped for portrait), fit:'cover'|'split', shift (per
+                        //   lens step, fraction of a cell), motion:'long'|'random', zoomJitter, expoJitter
+                        //   (± stops), tintJitter, gap, gapCore (fractions of the short edge), gapLuma }
+  fisheye: null,        // circular fisheye → remap mode 2: { radius (× half short edge), virtualHalfFov
+                        //   (deg), rim (reflection ring), fill:'contain'|'cover' }
   summary: '', traits: '',          // prose
   params: {             // all × "Lens character" amount (0..1.5) unless noted
     vignette: 0..~1.5,     // corner light falloff in stops ×1.6 (d = 0 centre .. 1 frame corner)
@@ -254,10 +278,20 @@ export const CAMERAS = [ {
     flash: 0..1,           // built-in flash harshness when the Flash toggle is on (not scaled; default 0.6)
     leak: 0..1,            // built-in light-leak strength (camera leaks always on when > 0)
     leakBias: 'edge'|'holga', // passed to overlays.makeLeaks(seed, { bias })
+    vigAxis: 0..1,         // 0 radial … 1 falloff only across the film / short frame axis (not scaled)
+    banding: 0..1,         // rotating-slit exposure bands along the long axis (Spinner)
+    swirl: 0..1,           // corner blur along arcs round the centre (Petzval; not scaled)
   } }, ... ];
 export const DEFAULT_CAMERA_ID = 'none';   // CAMERAS[0] = { id:'none', aspect:null, all look params zero }
 export function getCamera(id) {}
+export function effectiveCamera(camera, maskId)   // camera with a `masks` entry applied (or unchanged)
+export const GROUPS = [{ id:'classic' }, { id:'lomo' }]; export function cameraGroup(camera)  // UI grouping
+export const FLASH_GELS = [{ id, label, rgb: [r,g,b] | null, swatch }]; export function getGel(id)
 ```
+Lomography cameras (`brand: 'Lomography'`, ids `lomo-*` from `calibration/lomo-cameras.json`):
+Diana F+, Diana Mini, LC-A 120, LC-Wide, Fisheye No.2, Sprocket Rocket, Spinner 360°, ActionSampler,
+Supersampler, Oktomat, La Sardina, Simple Use, Petzval 85, Belair X 6-12. The original `lomo-lca`
+(brand 'Lomo') keeps its id.
 `vignette`/`vignetteHardness` keep their original meaning (fitted from reference photos in
 `calibration/`); every other key is an additive modifier that defaults to a no-op.
 
@@ -290,11 +324,18 @@ export function frameLayout(W, H, { camera, film, crop: bool, border: bool, seed
                            // orientation (instant films force their own aspect); whole image if crop off
   inner: [l, t],           // frame origin inside the output (px, full-res units)
   out: [w, h],             // output size incl. border (px, full-res units)
-  style: null|'135'|'half'|'120'|'holga'|'polaroid'|'instax',
+  style: null|'135'|'half'|'120'|'holga'|'sprocket'|'polaroid'|'instax',
   filmBorder: bool,        // rebate is film (grain + leaks continue onto it) vs instant paper
+  mask: null|'sprocket'|'rounded',   // in-picture mask (drawn even when border is off)
   draw: null | (ctx2d, ox, oy, k) => void,   // paints the border: canvas px (0,0) = output px (ox,oy)
 }                                            // at k output px per full-res px; opaque border, transparent picture
 ```
+In-picture masks are on the negative, so `draw` exists (with `inner = [0,0]`, `out = crop size`,
+`filmBorder: true`) even without a border: `sprocket` paints black KS perforations 2 mm in from each
+film edge plus edge print (alpha ≈ 0.85, process ink colour) OVER the picture, the frame's short
+side being the full 35 mm film width; with a border it only adds a thin scanner margin. `rounded`
+paints soft black corners outside a wobbly rounded rectangle; the feather is N nested layers added
+with `'lighter'` (no canvas blur), so preview and every strip match exactly.
 Borders are sized in film millimetres from the frame's across-film side (135: 24 mm picture on 35 mm
 film with KS perforations, edge print `FILM NAME`, frame numbers, DX-style bars, ink colour by
 process; 120: black rebate, edge print, frame number; holga: rough rounded mask; instant: paper
@@ -310,7 +351,7 @@ export function lensReach(camera, camAmt, frameW, frameH) -> px   // max lens sa
 export class Renderer {
   constructor(canvas)              // throws Error('webgl2-unavailable') if no WebGL2
   get limits()                     // { maxTexture, maxRenderbuffer, maxViewport: [w,h] }
-  setSource(canvasOrImageSource)   // uploads uSrc; for preview: the proxy canvas (whole image)
+  setSource(canvasOrImageSource)   // uploads uSrc (mipmapped); for preview: the proxy canvas (whole image)
   setLut(halfData: Uint16Array, N) // 3D RGBA16F (falls back to RGBA8 if unsupported)
   setMaps({ hmap, bmap })          // built from the whole image; sampled through the crop
   setDust(canvas | null)
@@ -321,7 +362,9 @@ export class Renderer {
   previewSize() -> [w, h]          // canvas size renderPreview() will use (output incl. border)
   renderPreview()                  // canvas.width/height = params.layout.out × (proxy / full); whole image if no layout
   renderRegion({ srcOrigin:[x,y], srcSize:[w,h], full:[W,H], outOrigin:[x,y], outSize:[w,h], scale,
-                 crop?:[x,y,w,h], inner?:[x,y], outFull?:[w,h] })
+                 crop?:[x,y,w,h], inner?:[x,y], outFull?:[w,h], texK? })
+                                   // texK = source texels per image render px (default 1; the exporter
+                                   // uploads minified remap sources downsampled)
                                    // all render px: full = whole image, crop = frame inside it (default whole),
                                    // inner = frame origin in the output, outFull = output size (default crop size).
                                    // Renders into an internal FBO of outSize, returns a fresh Uint8Array RGBA,
@@ -340,6 +383,8 @@ export class Renderer {
   leak: 0..1, leaks: [...makeLeaks()],          // user leaks
   camLeaks: [...makeLeaks(seed, { bias })],     // camera built-in leaks, weight = camera.params.leak × camAmt
   flash: 0 | 1,                                  // Flash toggle (strength = camera.params.flash)
+  gel: [r,g,b] | null,                           // flash gel transmission (cameras.FLASH_GELS rgb); tints only
+                                                 // the share of the light the flash added
   layout: <frameLayout() result> | null,         // format crop + border
   dust: 0..1,
   dateOn: bool,
@@ -361,7 +406,31 @@ veil → halation + bloom (maps) → flare → encode with LUT_HEADROOM shaper �
 composite border → grain (also on a film rebate; value noise in full-image px,
 size = fullShort·0.00045·film.grain.size / camera.formatScale, ≥1 target px; luminance-weighted)
 → light leaks, user + camera (screen; also on a film rebate) → dust (picture only) → date stamp
-(screen, picture only) → dither. Strip export needs neighbourhood sampling ≤ `PAD + lensReach`.
+(screen, picture only) → dither. Strip export needs neighbourhood sampling ≤ `PAD + lensReach`
+(ordinary lenses) or the remap source rect (below).
+
+**Lens space / remapped lenses.** `develop()` runs in *lens px*; `lensToImg(q)` maps them to image
+px and every lens tap (blur, CA, clarity, maps) goes through it. `uMode` 0 = plain (`q + crop.xy`,
+unchanged behaviour). 1 = **multi-lens grid**: the frame is split into cols×rows cells; each cell is a
+complete little frame (vignette, softness, CA, flash, flare per lens: `ctr`/`hd`/`refShort` are
+the cell's) whose lens px map affinely `img = b + q·m` (`fit:'cover'`: the whole photo cover-fitted,
+zoomed in just enough that the per-lens shifts stay inside; `fit:'split'`: each cell shows its own part
+of the frame — half-frame pairs), plus per-cell exposure / colour jitter and soft dark separators
+(`gapCore` black core + `gap` feather) at internal cell edges. 2 = **circular fisheye**: frame px
+inside the circle R = radius·short/2 map equidistant-ish to the source along each ray,
+`s = e·tan(ρΦ)/tanΦ` (e = short half-extent in the middle easing to the source's inscribed
+ellipse at the rim, so the centre bulges without wobble); outside the circle: a faint reflection
+of the rim, then black film base; a grey ring just inside the rim. Remaps minify the source, so
+the source texture is mipmapped and sampled with `textureLod`, lod = log2(local magnification ×
+texK) (grid: m; fisheye: analytic radial derivative) — identical in preview (proxy, texK 1) and
+export. `remapGeometry(camera, img, crop, seed)` is the pure JS twin that builds the uniforms
+(resolution independent, seeded per photo); `remapSourceRect(G, frameRect, reach)` returns the
+image rect a frame rect samples (grid: affine corners per intersecting cell; fisheye: 4×97 border
+samples + centre/axes through `fishPoint`) and the minimum magnification `jMin`.
+Also: `vigAxis` swaps the radial vignette distance for the across-film one (lens-frame relative,
+so Supersampler strips darken at their ends), `banding` multiplies seeded 1-D value noise along the
+long axis, `swirl` replaces the corner-blur taps with arcs round the lens centre, and the flash gel
+tints `share = clamp(1.7·(1 − 2^(flash·(sAmb − stops))))` of the light.
 
 ## 7. `js/exif.js`
 
@@ -383,9 +452,11 @@ Baseline JPEG, YCbCr 4:2:0, standard Annex K tables, optional EXIF APP1 (DateTim
 ```js
 export async function exportJpeg({ renderer, image /*HTMLImageElement full res*/, params /*RenderParams*/,
   quality = 92, exifDate = null, onProgress = (0..1) => {}, signal /*AbortSignal*/,
-  proxy /*restored after*/, previewFrame /*{canvas,origin,size} restored after*/ }) -> Blob
-export function planExport(W, H, limits, layout?, reach?) -> { s, outW, outH, stripH, pad, img, crop, inner,
-  sx0, srcW, scale, fullShort }
+  proxy /*restored after*/, previewFrame /*{canvas,origin,size} restored after*/,
+  stripPixels /*test hook: strip size*/ }) -> Blob
+export function planExport(W, H, limits, layout?, reach?, stripPixels?) -> { s, outW, outH, stripH, pad, img,
+  crop, inner, sx0, srcW, scale, fullShort }
+export function remapStripSource(G, RG, y0, rows, reach, maxDim?, budget?) -> { x, y, w, h, texK }
 ```
 Output = `params.layout.out × s` (crop + border; whole image when there is no layout), `s ≤ 1` so the
 output and the per-strip source canvas fit the renderer limits. Strips: width = output width, height a
@@ -393,7 +464,12 @@ multiple of 16 sized to ~4 MP incl. `pad = PAD + lensReach(camera, camAmt, crop)
 Per strip: the matching image rows (frame columns ± pad, clamped in-bounds) are drawn from `image` into a
 reusable 2D canvas → `setSource`; if the layout has a border, its rows are drawn with `layout.draw` into a
 second canvas → `setFrame`; then `renderRegion` → worker (≤2 strips in flight). Without a layout the
-geometry is identical to the original whole-image contract. Restores `proxy` / `previewFrame` /
+geometry is identical to the original whole-image contract. **Remapped lenses** (`camera.grid` /
+`camera.fisheye`) don't use the column band: per strip, `remapSourceRect` (strip rows ± PAD, lens
+reach × magnification) gives the image rect it samples; it is aligned to 32 render px (so mip blocks
+of neighbouring strips line up), clamped, drawn at `texK` = a power of two ≤ 1/jMin (grid cells are
+minified → smaller upload; fisheye 1), capped at 16 MP / the GPU limit, and passed as
+`srcOrigin/srcSize/texK`. Restores `proxy` / `previewFrame` /
 params afterwards and releases canvases (width=height=0) for iOS memory.
 
 ## 10. Shell (`index.html`, `js/app.js`, `js/ui.js`, `css/app.css`, PWA files)

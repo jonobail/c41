@@ -15,13 +15,47 @@
 // inner = frame origin in output, scale = s, params.fullShort = frame short edge (full res),
 // so grain etc. size identically to the preview.
 //
+// Remapped lenses (camera.grid / camera.fisheye) sample the source far away from each output
+// pixel, so the fixed "frame columns ± pad" band doesn't work. For them each strip uploads the
+// source rect renderer.remapSourceRect() says it needs (the JS twin of the shader's mapping, plus
+// the lens reach), aligned to a 32 px grid so the mip pyramids of neighbouring strips line up,
+// and — where the remap minifies (grid cells) — downsampled by a power of two (texK) so it stays
+// small; the shader picks the mip level from texK, just as the preview does from the proxy.
+//
 // NOTE: the Uint8Array returned by renderer.renderRegion is transferred to the worker
 // (its buffer is detached) — the renderer must return a fresh array per call.
 
-import { lensReach } from './renderer.js';
+import { lensReach, remapGeometry, remapSourceRect } from './renderer.js';
 
 export const PAD = 64;
 const STRIP_PIXELS = 4_000_000;
+const REMAP_SRC_PIXELS = 16_000_000;   // cap for one remapped strip's source upload
+const ALIGN = 32;
+
+/**
+ * Source upload for one strip of a remapped lens (render px). G = planExport result,
+ * RG = remapGeometry in render px, reach = lens reach in lens px, maxDim = GPU limit.
+ * Returns { x, y, w, h, texK } — rect in whole-image render px (aligned, clamped) and the texels
+ * per render px to draw it at. Exported for tests.
+ */
+export function remapStripSource(G, RG, y0, hs, reach, maxDim = 16384, budget = REMAP_SRC_PIXELS) {
+  const pad = PAD;
+  const fy0 = y0 - G.inner[1] - pad, fy1 = y0 + hs - G.inner[1] + pad;
+  const fr = [-pad, fy0, G.crop[2] + pad, fy1];
+  const r = remapSourceRect(RG, fr, reach);
+  const iw = Math.round(G.img[0]), ih = Math.round(G.img[1]);
+  if (!r) return { x: 0, y: 0, w: Math.min(iw, ALIGN), h: Math.min(ih, ALIGN), texK: 1 };
+  let [x0, y0r, x1, y1] = r.rect;
+  x0 = Math.max(0, Math.floor((x0 - pad) / ALIGN) * ALIGN);
+  y0r = Math.max(0, Math.floor((y0r - pad) / ALIGN) * ALIGN);
+  x1 = Math.min(iw, Math.ceil((x1 + pad) / ALIGN) * ALIGN);
+  y1 = Math.min(ih, Math.ceil((y1 + pad) / ALIGN) * ALIGN);
+  const w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0r);
+  // texels per render px: the remap never needs more than 1 / jMin (rounded to a power of two)
+  let texK = Math.min(1, Math.pow(2, -Math.floor(Math.log2(Math.max(1, r.jMin)))));
+  while (texK > 1 / 64 && (w * h * texK * texK > budget || Math.max(w, h) * texK > maxDim)) texK /= 2;
+  return { x: x0, y: y0r, w, h, texK };
+}
 const MAX_IN_FLIGHT = 2;
 
 function abortError() {
@@ -37,7 +71,7 @@ const nextTask = () => new Promise((r) => setTimeout(r, 0));
  * layout: { crop: [x,y,w,h], inner: [l,t], out: [w,h] } in full-res px (default: whole image).
  * reach: extra neighbourhood (frame px at full res) the lens may sample — see lensReach.
  */
-export function planExport(W, H, limits, layout = null, reach = 0) {
+export function planExport(W, H, limits, layout = null, reach = 0, stripPixels = STRIP_PIXELS) {
   const lim = limits || {};
   const vp = Array.isArray(lim.maxViewport) ? lim.maxViewport : [lim.maxViewport, lim.maxViewport];
   const cands = [lim.maxTexture, lim.maxRenderbuffer, vp[0], vp[1]].filter((v) => Number.isFinite(v) && v > 0);
@@ -54,7 +88,7 @@ export function planExport(W, H, limits, layout = null, reach = 0) {
   }
   const outW = Math.min(maxDim, Math.max(1, Math.round(out[0] * s)));
   const outH = Math.min(maxDim, Math.max(1, Math.round(out[1] * s)));
-  const stripH = Math.max(16, Math.floor((STRIP_PIXELS / outW - 2 * pad) / 16) * 16);
+  const stripH = Math.max(16, Math.floor((stripPixels / outW - 2 * pad) / 16) * 16);
   // no layout: the frame is the whole (rounded) output — identical to the pre-crop contract
   const plain = !layout;
   const img = plain ? [outW, outH] : [W * s, H * s];
@@ -72,6 +106,7 @@ export function planExport(W, H, limits, layout = null, reach = 0) {
 export async function exportJpeg({
   renderer, image, params, quality = 92, exifDate = null,
   onProgress = () => {}, signal, proxy = null, previewFrame = null,
+  stripPixels = STRIP_PIXELS,          // test hook: force small strips to check seams
 }) {
   if (signal?.aborted) throw abortError();
   const W = image.naturalWidth || image.videoWidth || image.width;
@@ -81,7 +116,10 @@ export async function exportJpeg({
   const layout = params && params.layout && params.layout.crop ? params.layout : null;
   const crop0 = layout ? layout.crop : [0, 0, W, H];
   const reach = lensReach(params && params.camera, params && params.camAmt, crop0[2], crop0[3]);
-  const G = planExport(W, H, renderer.limits, layout, reach);
+  const camera = params && params.camera;
+  const remap = !!(camera && (camera.grid || camera.fisheye));
+  // remapped lenses don't use the column band (reach is applied per strip in remapStripSource)
+  const G = planExport(W, H, renderer.limits, layout, remap ? 0 : reach, stripPixels);
   const { s, outW, outH, stripH, pad, scale, fullShort } = G;
   const canvasH = stripH + 2 * pad;
   const drawFrame = layout && typeof layout.draw === 'function' ? layout.draw : null;
@@ -124,9 +162,13 @@ export async function exportJpeg({
     worker.onerror = (e) => { e.preventDefault?.(); fail(new Error('JPEG worker failed: ' + (e.message || 'unknown error'))); };
     worker.postMessage({ type: 'start', width: outW, height: outH, quality, exifDate: exifDate || undefined });
 
+    const lim = renderer.limits || {};
+    const maxDim = Math.min(...[lim.maxTexture, lim.maxRenderbuffer].filter((v) => Number.isFinite(v) && v > 0), 16384);
+    const RG = remap ? remapGeometry(camera, G.img, G.crop, params.seed ?? 1) : null;
+    const reachR = remap ? Math.ceil(reach * s) : 0;
     canvas = document.createElement('canvas');
-    canvas.width = G.srcW;
-    canvas.height = canvasH;
+    canvas.width = remap ? 1 : G.srcW;
+    canvas.height = remap ? 1 : canvasH;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('export: 2D canvas unavailable');
     ctx.imageSmoothingEnabled = true;
@@ -150,18 +192,33 @@ export async function exportJpeg({
       if (signal?.aborted) throw abortError();
 
       const hs = Math.min(stripH, outH - y0);
-      // canvas row 0 in whole-image render px (frame row = output row − inner, image = frame + crop)
-      const top = Math.floor(y0 - G.inner[1] + G.crop[1]) - pad;
-      const vTop = Math.max(0, top);
-      const vBot = Math.min(imgH, top + canvasH);
-      ctx.clearRect(0, 0, G.srcW, canvasH);
-      // Only in-bounds source rects (Safari draws nothing for out-of-bounds ones).
-      if (vBot > vTop) {
-        const sy = vTop / s;
-        const sh = Math.min(H - sy, (vBot - vTop) / s);
-        const sx = G.sx0 / s;
-        const sw = Math.min(W - sx, G.srcW / s);
-        if (sh > 0 && sw > 0) ctx.drawImage(image, sx, sy, sw, sh, 0, vTop - top, G.srcW, vBot - vTop);
+      let srcOrigin, srcSize, texK = 1;
+      if (RG) {
+        const R = remapStripSource(G, RG, y0, hs, reachR, maxDim);
+        const cw = Math.max(1, Math.round(R.w * R.texK)), chh = Math.max(1, Math.round(R.h * R.texK));
+        if (canvas.width !== cw || canvas.height !== chh) { canvas.width = cw; canvas.height = chh; }
+        else ctx.clearRect(0, 0, cw, chh);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        const sx = R.x / s, sy = R.y / s;
+        const sw = Math.min(W - sx, R.w / s), sh = Math.min(H - sy, R.h / s);
+        if (sw > 0 && sh > 0) ctx.drawImage(image, sx, sy, sw, sh, 0, 0, cw, chh);
+        srcOrigin = [R.x, R.y]; srcSize = [R.w, R.h]; texK = cw / R.w;
+      } else {
+        // canvas row 0 in whole-image render px (frame row = output row − inner, image = frame + crop)
+        const top = Math.floor(y0 - G.inner[1] + G.crop[1]) - pad;
+        const vTop = Math.max(0, top);
+        const vBot = Math.min(imgH, top + canvasH);
+        ctx.clearRect(0, 0, G.srcW, canvasH);
+        // Only in-bounds source rects (Safari draws nothing for out-of-bounds ones).
+        if (vBot > vTop) {
+          const sy = vTop / s;
+          const sh = Math.min(H - sy, (vBot - vTop) / s);
+          const sx = G.sx0 / s;
+          const sw = Math.min(W - sx, G.srcW / s);
+          if (sh > 0 && sw > 0) ctx.drawImage(image, sx, sy, sw, sh, 0, vTop - top, G.srcW, vBot - vTop);
+        }
+        srcOrigin = [G.sx0, top]; srcSize = [G.srcW, canvasH];
       }
       renderer.setSource(canvas);
 
@@ -172,9 +229,9 @@ export async function exportJpeg({
       }
 
       const px = renderer.renderRegion({
-        srcOrigin: [G.sx0, top], srcSize: [G.srcW, canvasH], full: G.img,
+        srcOrigin, srcSize, full: G.img,
         crop: G.crop, inner: G.inner, outFull: [outW, outH],
-        outOrigin: [0, y0], outSize: [outW, hs], scale,
+        outOrigin: [0, y0], outSize: [outW, hs], scale, texK,
       });
       if (!px || px.length < outW * hs * 4) throw new Error('export: renderRegion returned no pixels');
 

@@ -53,15 +53,68 @@ uniform vec4 uDateRect;
 uniform float uFrameOn, uFrameFilm;
 uniform vec2 uFrameOrigin, uFrameSize;
 uniform float uSplit, uShowOrig;
+// Remapped lenses (docs/ARCHITECTURE.md §6 "remap"): 0 plain, 1 multi-lens grid, 2 circular fisheye
+uniform int uMode;
+uniform vec2 uGridN;       // cols, rows (in the frame's orientation)
+uniform vec4 uCellA[8];    // per cell: image-px origin b.xy, magnification m (image px per cell px), exposure (stops)
+uniform vec3 uCellB[8];    // per cell: white-balance multiplier
+uniform vec3 uGap;         // separator core half-width (frame px), feather (frame px), luma
+uniform vec4 uFish;        // circle radius R (frame px), half-FOV phi (rad), tan(phi), rim strength
+uniform vec4 uFishS;       // scene centre (image px), scene half extents (image px)
+uniform float uTexK;       // source texels per image px (LOD for minified remaps)
+uniform float uVigAxis;    // 0 radial vignette .. 1 falloff only across the film (short frame axis)
+uniform float uBand;       // rotating-slit exposure banding along the long axis
+uniform float uSwirl;      // Petzval: corner blur along arcs round the lens centre
+uniform vec4 uGel;         // flash gel transmission (luma-normalised rgb), amount
 
 out vec4 outColor;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
-vec3 srcAt(vec2 p) {
-  vec2 q = clamp(p + uCropOff, vec2(0.5), uImg - 0.5);
-  return texture(uSrc, (q - uSrcOrigin) / uSrcSize).rgb;
+// ---- lens space ----
+// develop() works in "lens px": frame px for a plain lens or the fisheye, cell-local px for a grid.
+// lensToImg() maps lens px to image px; every tap (blur, CA, clarity) goes through it, so local
+// lens effects stay local while the picture is remapped. Set per pixel in main().
+vec2 gFull;      // lens frame size (frame, or one grid cell)
+vec2 gCtr;       // lens centre (lens px)
+float gHd;       // vignette / falloff normaliser (half-diagonal; fisheye: circle radius)
+float gK;        // lens frame short edge / frame short edge
+float gLod;      // source mip level (minified remaps)
+vec2 gMapB;      // grid: image px = gMapB + q * gMapM
+float gMapM;
+float gCellExpo; // grid: per-cell exposure (stops)
+vec3 gCellWb;    // grid: per-cell colour
+float gGap;      // grid: separator mask 0..1
+float gOut;      // fisheye: 0 inside the image circle .. 1 outside
+float gRho;      // fisheye: radius / circle radius
+
+// Source scale along dir at circle radius rho: isotropic (short half-extent) in the middle, so
+// the centre bulges without wobble, easing toward the source's inscribed ellipse at the rim so the
+// long side of the photo is used too ('contain').
+float fishE(vec2 dir, float rho) {
+  vec2 hs = uFishS.zw;
+  float hmin = min(hs.x, hs.y);
+  float ell = inversesqrt(dot(dir * dir, 1.0 / (hs * hs)));
+  return mix(hmin, ell, rho * rho * rho);
 }
+vec2 fishMap(vec2 q) {
+  vec2 v = q - uFull * 0.5;
+  float r = length(v);
+  if (r < 1e-4) return uFishS.xy;
+  vec2 dir = v / r;
+  float rho = min(r / uFish.x, 0.999);
+  return uFishS.xy + dir * (fishE(dir, rho) * tan(rho * uFish.y) / uFish.z);
+}
+vec2 lensToImg(vec2 q) {
+  if (uMode == 1) return gMapB + q * gMapM;
+  if (uMode == 2) return fishMap(q);
+  return q + uCropOff;
+}
+vec3 srcImg(vec2 qi) {
+  qi = clamp(qi, vec2(0.5), uImg - 0.5);
+  return textureLod(uSrc, (qi - uSrcOrigin) / uSrcSize, gLod).rgb;
+}
+vec3 srcAt(vec2 p) { return srcImg(lensToImg(p)); }
 // lens tap with lateral CA (red magnified, blue shrunk)
 vec3 tapCA(vec2 q, vec2 off) {
   return vec3(srcAt(q + off).r, srcAt(q).g, srcAt(q - off).b);
@@ -107,8 +160,9 @@ vec3 screen(vec3 a, vec3 b) { return 1.0 - (1.0 - a) * (1.0 - clamp(b, 0.0, 1.0)
 
 // Full camera + film development of the picture at frame coords p.
 vec3 develop(vec2 p) {
-  vec2 ctr = uFull * 0.5;
-  float hd = length(ctr);
+  vec2 ctr = gCtr;
+  float hd = gHd;
+  float refShort = uRefShort * gK;
   vec2 rp = (p - ctr) / hd;                 // centre 0 .. corner length 1
   float d = length(rp);
   float edge = smoothstep(uSweet, 1.0, d);  // 0 in the sweet spot .. 1 in the corners
@@ -122,13 +176,13 @@ vec3 develop(vec2 p) {
   if (uCA > 0.0) {
     off = (q - ctr) * uCA * 0.0025;
     float lo = length(off);
-    if (lo > uMaxCA) off *= uMaxCA / lo;
+    if (lo > uMaxCA * gK) off *= uMaxCA * gK / lo;
   }
   vec3 col = uCA > 0.0 ? tapCA(q, off) : srcAt(q);
 
   // ---- softness: overall + field curvature toward the corners (elliptical kernel) ----
   float soft = uSoft + uCornerSoft * edge;
-  float rad = min(soft * uRefShort * 0.005, uMaxR);
+  float rad = min(soft * refShort * 0.005, uMaxR * gK);
   if (rad > 0.4) {
     vec2 rd = d > 1e-4 ? rp / d : vec2(1.0, 0.0);
     vec2 td = vec2(-rd.y, rd.x);
@@ -142,6 +196,15 @@ vec3 develop(vec2 p) {
       float a = fi * 2.3999632;
       vec2 kk = vec2(cos(a), sin(a)) * rr;
       vec2 o2 = rd * (kk.x * ra) + td * (kk.y * rt);
+      if (uSwirl > 0.0) {
+        // Petzval swirl: taps on an ARC round the lens centre (curved, not straight, smear)
+        vec2 v = q - ctr;
+        float vr = max(length(v), 1.0);
+        float ph = kk.x * uSwirl * 2.4 * rad * edge / vr;
+        float sc = 1.0 + kk.y * rad * 0.35 / vr;
+        vec2 cs = vec2(cos(ph), sin(ph));
+        o2 = mix(o2, (vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x) * sc) - v, min(1.0, uSwirl));
+      }
       acc += uCA > 0.0 ? tapCA(q + o2, off) : srcAt(q + o2);
     }
     col = mix(col, acc / 17.0, smoothstep(0.4, 1.5, rad));
@@ -150,8 +213,8 @@ vec3 develop(vec2 p) {
   // ---- micro-contrast (unsharp mask) — fades where the corners go soft ----
   float sh = uSharp * (1.0 - edge * min(1.0, uCornerSoft * 2.0));
   if (sh > 0.0 || uClarity != 0.0) {
-    float r1 = max(0.75, uRefShort * 0.0008);
-    float r2 = uRefShort * 0.006;
+    float r1 = max(0.75, refShort * 0.0008);
+    float r2 = refShort * 0.006;
     vec3 m1 = vec3(0.0), m2 = vec3(0.0);
     for (int i = 0; i < 8; i++) {
       float a = float(i) * 0.7853982;
@@ -173,10 +236,17 @@ vec3 develop(vec2 p) {
 
   // ---- linear light ----
   vec3 lin = toLin(col) * uWB * uExpo;
+  if (uMode == 1) lin *= exp2(gCellExpo) * gCellWb;
 
   // vignette (stops), optionally off-centre and uneven
   vec2 vq = rp - uVigOff;
   float vd = length(vq);
+  if (uVigAxis > 0.0) {
+    // falloff across the film only (rotating slit, Supersampler strips): 1 at the lens frame's
+    // edges along the frame's short axis
+    float ax = uFull.x >= uFull.y ? abs(p.y - ctr.y) / (gFull.y * 0.5) : abs(p.x - ctr.x) / (gFull.x * 0.5);
+    vd = mix(vd, ax, uVigAxis);
+  }
   if (uVigWob > 0.0) {
     float ang = atan(vq.y, vq.x);
     vd *= 1.0 + uVigWob * 0.16 * (sin(ang * 2.0 + 1.3) + 0.6 * sin(ang * 3.0 + 4.1) + 0.4 * sin(ang * 5.0 + 0.7));
@@ -188,17 +258,33 @@ vec3 develop(vec2 p) {
   if (uFlash > 0.0) {
     float L = dot(lin, LUMA) / max(uExpo, 1e-3);
     float r2 = d * d;
-    float stops = 0.95 * exp(-r2 / 0.22) - 0.3 - 1.1 * r2;
-    stops -= 1.7 * (1.0 - smoothstep(0.006, 0.16, L));
+    float sAmb = -0.3 - 1.7 * (1.0 - smoothstep(0.006, 0.16, L));   // what the ambient light keeps
+    float stops = 0.95 * exp(-r2 / 0.22) - 1.1 * r2 + sAmb;
     lin *= exp2(uFlash * stops);
     lin *= mix(vec3(1.0), vec3(0.95, 1.0, 1.07), uFlash);
+    if (uGel.w > 0.0) {
+      // colour gel: tint only the share of the light the flash added, not the ambient
+      // (×1.7: the subject the flash reaches is lit mostly by it — the Colorsplash reference set
+      // shows near-saturated casts on the subject)
+      float share = clamp(1.7 * (1.0 - exp2(uFlash * (sAmb - stops))), 0.0, 1.0);
+      lin *= mix(vec3(1.0), uGel.rgb, share * uGel.w);
+    }
   }
+
+  // rotating-slit banding (Spinner): faint bands along the long axis from an uneven spin
+  if (uBand > 0.0) {
+    float lx = uFull.x >= uFull.y ? p.x : p.y;
+    lin *= exp2(uBand * 0.24 * vnoise(vec2(lx / (0.08 * min(uFull.x, uFull.y)), 0.5), 11u));
+  }
+
+  // multi-lens grid: soft dark separators between the cells
+  if (gGap > 0.0) lin = mix(lin, lin * uGap.z * 0.25, gGap);
 
   // veiling glare (washed blacks)
   lin += uVeil * 0.25 * uExpo;
 
   // halation + bloom (maps cover the whole image)
-  vec2 nImg = (q + uCropOff) / uImg;
+  vec2 nImg = clamp(lensToImg(q), vec2(0.0), uImg) / uImg;
   vec4 h = texture(uHmap, nImg);
   // halation is light scattered back from the film base: it shows as a glow AROUND highlights,
   // so suppress it inside the (already saturated) highlight itself
@@ -206,10 +292,21 @@ vec3 develop(vec2 p) {
   lin += uHalCol * (0.6 * h.r + 0.4 * h.g) * uHal * 2.0 * uExpo * (1.0 - 0.85 * hiSelf);
   lin += texture(uBmap, nImg).rgb * uBloom * 1.5 * uExpo;
 
+  // fisheye: grey internal-reflection ring just inside the rim; outside the image circle only a
+  // faint reflection of the rim on the lens barrel, then black film base
+  if (uMode == 2) {
+    lin += uFish.w * 0.05 * uExpo * smoothstep(0.92, 0.985, gRho) * (1.0 - smoothstep(0.985, 1.0, gRho));
+    if (gOut > 0.0) {
+      float rimL = dot(lin, LUMA);
+      vec3 refl = vec3(rimL) * uFish.w * 0.25 * exp(-(gRho - 1.0) / 0.025);
+      lin = mix(lin, refl + 0.0012 * uExpo, gOut);
+    }
+  }
+
   // flare
   if (uFlare.z > 0.0) {
-    vec2 fq0 = (p - ctr) / uRefShort;
-    vec2 fq = (uFlare.xy * uFull - ctr) / uRefShort;
+    vec2 fq0 = (p - ctr) / refShort;
+    vec2 fq = (uFlare.xy * gFull - ctr) / refShort;
     float fd = length(fq0 - fq);
     vec3 fl = vec3(1.0, 0.78, 0.55) * (exp(-fd * fd / (0.08 * 0.08)) * 1.4 + exp(-fd * fd / (0.35 * 0.35)) * 0.12);
     // ghosts along the line through the centre
@@ -257,13 +354,51 @@ void main() {
   vec4 fr = vec4(0.0);
   if (uFrameOn > 0.5) fr = texture(uFrameTex, (o - uFrameOrigin) / uFrameSize);
 
+  // per-pixel lens space (defaults: the whole frame, plain lens)
+  gFull = uFull; gCtr = uFull * 0.5; gHd = length(gCtr); gK = 1.0; gLod = 0.0;
+  gMapB = vec2(0.0); gMapM = 1.0; gCellExpo = 0.0; gCellWb = vec3(1.0); gGap = 0.0; gOut = 0.0; gRho = 0.0;
+
   if (uShowOrig > 0.5 || o.x / uOutFull.x < uSplit) {
-    vec3 c0 = fr.a > 0.998 ? vec3(0.0) : srcAt(p);
+    vec3 c0 = fr.a > 0.998 ? vec3(0.0) : srcImg(p + uCropOff);
     outColor = vec4(mix(c0, fr.rgb, fr.a), 1.0);
     return;
   }
 
-  vec3 c = fr.a > 0.998 ? fr.rgb : mix(develop(p), fr.rgb, fr.a);
+  vec2 lp = p;
+  if (uMode == 1) {
+    vec2 S = uFull / uGridN;
+    vec2 ij = clamp(floor(p / S), vec2(0.0), uGridN - 1.0);
+    int k = int(ij.y * uGridN.x + ij.x);
+    lp = p - ij * S;
+    gFull = S; gCtr = S * 0.5; gHd = length(gCtr);
+    gK = min(S.x, S.y) / min(uFull.x, uFull.y);
+    vec4 A = uCellA[k];
+    gMapB = A.xy; gMapM = A.z; gCellExpo = A.w; gCellWb = uCellB[k];
+    gLod = max(0.0, log2(A.z * uTexK));
+    // distance to the nearest INTERNAL cell edge (frame px)
+    float de = 1e9;
+    if (ij.x > 0.0) de = min(de, lp.x);
+    if (ij.x < uGridN.x - 1.0) de = min(de, S.x - lp.x);
+    if (ij.y > 0.0) de = min(de, lp.y);
+    if (ij.y < uGridN.y - 1.0) de = min(de, S.y - lp.y);
+    gGap = 1.0 - smoothstep(uGap.x, uGap.x + uGap.y, de);
+  } else if (uMode == 2) {
+    vec2 v = p - gCtr;
+    float r = length(v);
+    gRho = r / uFish.x;
+    gHd = uFish.x;
+    gOut = smoothstep(1.0, 1.0 + 1.5 / uFish.x, gRho);
+    if (gRho > 0.995) lp = gCtr + v * (0.995 / gRho);
+    // local magnification of the fisheye map → mip level (rim is strongly minified)
+    float rho = min(gRho, 0.995);
+    vec2 dir = r > 1e-4 ? v / r : vec2(1.0, 0.0);
+    float e = fishE(dir, rho);
+    float cs = cos(rho * uFish.y);
+    float jr = e * uFish.y / (uFish.x * uFish.z * cs * cs);
+    gLod = max(0.0, log2(jr * uTexK));
+  }
+
+  vec3 c = fr.a > 0.998 ? fr.rgb : mix(develop(lp), fr.rgb, fr.a);
   float onPic = 1.0 - fr.a;
   float filmW = mix(1.0, uFrameFilm, fr.a);   // grain / leaks continue onto a film rebate
 
@@ -360,6 +495,7 @@ const UNIFORMS = [
   'uHalCol', 'uHal', 'uBloom', 'uFlare', 'uFilmAmt', 'uContrast', 'uGrain', 'uSeed',
   'uLeakN', 'uLeakGeo', 'uLeakCol', 'uDust', 'uDateOn', 'uDateRect',
   'uFrameOn', 'uFrameFilm', 'uFrameOrigin', 'uFrameSize', 'uSplit', 'uShowOrig',
+  'uMode', 'uGridN', 'uCellA', 'uCellB', 'uGap', 'uFish', 'uFishS', 'uTexK', 'uVigAxis', 'uBand', 'uGel', 'uSwirl',
 ];
 // texture units
 const U_SRC = 0, U_LUT = 1, U_HMAP = 2, U_BMAP = 3, U_DUST = 4, U_DATE = 5, U_FRAME = 6;
@@ -401,7 +537,162 @@ export function lensUniforms(camera, camAmt = 1) {
     bloom: clampN(num(c.bloom, 0) * a, 0, 1.5),
     flare: num(c.flare, 0) * a,
     flash: clampN(num(c.flash, 0.6), 0, 1),
+    vigAxis: clampN(num(c.vigAxis, 0), 0, 1),
+    band: clampN(num(c.banding, 0) * a, 0, 1.5),
+    swirl: clampN(num(c.swirl, 0), 0, 1),
   };
+}
+
+/* ------------------------------------------------------------------ remapped lenses */
+// Multi-lens grids (ActionSampler, Supersampler, Oktomat, half-frame pairs) and circular
+// fisheyes sample the source far from the output pixel. The geometry below is the JS twin of the
+// shader's lensToImg(): the renderer turns it into uniforms, and the exporter uses
+// remapSourceRect() to upload exactly the source region each strip needs.
+
+export const GRID_MAX = 8;
+
+function strHash(s) {
+  let h = 2166136261;
+  for (const ch of String(s || '')) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), a | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1;   // −1..1
+  };
+}
+
+/**
+ * Remap geometry for `camera.grid` / `camera.fisheye`, or null for an ordinary lens.
+ * img = [W, H] whole source image, crop = [x, y, w, h] frame inside it — any consistent px units
+ * (preview proxy px or export render px); everything scales with them. seed = photo seed.
+ *   grid:    { mode: 1, cols, rows, S: [w, h] cell size, cells: [{ b: [x, y], m, expo, wb: [r,g,b] }],
+ *              gapCore, gapFeather, gapLuma }   image px = b + cellLocal × m
+ *   fisheye: { mode: 2, R, phi, tanPhi, rim, sc: [x, y], sh: [hx, hy], frame: [w, h] }
+ */
+export function remapGeometry(camera, img, crop, seed = 1) {
+  const g = camera && camera.grid, f = camera && camera.fisheye;
+  if (!g && !f) return null;
+  const [cx, cy, Fw, Fh] = crop;
+  const short = Math.min(Fw, Fh);
+  if (g) {
+    const land = Fw >= Fh;
+    const cols = Math.max(1, Math.round(land ? g.cols : g.rows));
+    const rows = Math.max(1, Math.round(land ? g.rows : g.cols));
+    const n = Math.min(GRID_MAX, cols * rows);
+    const S = [Fw / cols, Fh / rows];
+    const r = rng(((seed >>> 0) * 2654435761) ^ strHash(camera.id));
+    const shift = num(g.shift, 0);
+    let dir;
+    if (g.motion === 'long') dir = land ? [1, 0] : [0, 1];
+    else { const a = (r() + 1) * Math.PI; dir = [Math.cos(a), Math.sin(a)]; }
+    const raw = [];
+    for (let k = 0; k < n; k++) {
+      const t = k - (n - 1) / 2;
+      raw.push({
+        o: [shift * t * dir[0] + 0.35 * shift * r(), shift * t * dir[1] + 0.35 * shift * r()],
+        z: 1 + num(g.zoomJitter, 0) * Math.abs(r()),
+        expo: num(g.expoJitter, 0) * r(),
+        tint: num(g.tintJitter, 0) * r(),
+      });
+    }
+    const split = g.fit === 'split';
+    const maxO = [0, 1].map((a) => Math.max(...raw.map((c) => Math.abs(c.o[a]))));
+    // cover-fit the whole image into a cell, zoomed in just enough that the shifts stay inside it
+    const m0 = Math.min(img[0] / (S[0] * (1 + 2 * maxO[0])), img[1] / (S[1] * (1 + 2 * maxO[1])));
+    const cells = raw.map((c, k) => {
+      const m = split ? 1 / c.z : m0 / c.z;
+      let centre;
+      if (split) {
+        const i = k % cols, j = Math.floor(k / cols);
+        centre = [cx + (i + 0.5) * S[0] + c.o[0] * S[0], cy + (j + 0.5) * S[1] + c.o[1] * S[1]];
+      } else {
+        centre = [img[0] / 2 + c.o[0] * S[0] * m, img[1] / 2 + c.o[1] * S[1] * m];
+      }
+      return {
+        b: [centre[0] - S[0] * 0.5 * m, centre[1] - S[1] * 0.5 * m], m, expo: c.expo,
+        wb: [1 + c.tint, 1, 1 - c.tint],
+      };
+    });
+    return {
+      mode: 1, cols, rows, S, cells,
+      gapCore: num(g.gapCore, 0) * short, gapFeather: Math.max(1e-3, num(g.gap, 0.01) * short),
+      gapLuma: num(g.gapLuma, 0.8),
+    };
+  }
+  const R = num(f.radius, 1.08) * short / 2;
+  const phi = clampN(num(f.virtualHalfFov, 70), 20, 85) * Math.PI / 180;
+  const sh = f.fill === 'cover' ? [Math.min(img[0], img[1]) / 2, Math.min(img[0], img[1]) / 2] : [img[0] / 2, img[1] / 2];
+  return { mode: 2, R, phi, tanPhi: Math.tan(phi), rim: num(f.rim, 0.35), sc: [img[0] / 2, img[1] / 2], sh, frame: [Fw, Fh] };
+}
+
+/** JS twin of the shader's fishMap(): frame px → [image x, image y, local magnification]. */
+export function fishPoint(G, x, y) {
+  const vx = x - G.frame[0] / 2, vy = y - G.frame[1] / 2;
+  const r = Math.hypot(vx, vy);
+  const dx = r > 1e-4 ? vx / r : 1, dy = r > 1e-4 ? vy / r : 0;
+  const rho = Math.min(r / G.R, 0.995);
+  const hmin = Math.min(G.sh[0], G.sh[1]);
+  const ell = 1 / Math.sqrt((dx * dx) / (G.sh[0] * G.sh[0]) + (dy * dy) / (G.sh[1] * G.sh[1]));
+  const e = hmin + (ell - hmin) * rho * rho * rho;
+  const s = e * Math.tan(rho * G.phi) / G.tanPhi;
+  const cs = Math.cos(rho * G.phi);
+  return [G.sc[0] + dx * s, G.sc[1] + dy * s, e * G.phi / (G.R * G.tanPhi * cs * cs)];
+}
+
+/**
+ * Source region (image px, [x0, y0, x1, y1], unclamped) that frame rect [x0, y0, x1, y1] samples
+ * under remap geometry G, including `reach` lens px of neighbourhood (blur / CA / clarity).
+ * Also returns jMin = the smallest image-px-per-lens-px over the region (how far the source can
+ * be downsampled before it limits detail).
+ */
+export function remapSourceRect(G, rect, reach = 0) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, jMin = Infinity;
+  const add = (x, y, pad) => {
+    x0 = Math.min(x0, x - pad); y0 = Math.min(y0, y - pad);
+    x1 = Math.max(x1, x + pad); y1 = Math.max(y1, y + pad);
+  };
+  if (G.mode === 1) {
+    const [Sw, Sh] = G.S;
+    for (let j = 0; j < G.rows; j++) for (let i = 0; i < G.cols; i++) {
+      const ax = Math.max(rect[0], i * Sw), bx = Math.min(rect[2], (i + 1) * Sw);
+      const ay = Math.max(rect[1], j * Sh), by = Math.min(rect[3], (j + 1) * Sh);
+      if (bx <= ax || by <= ay) continue;
+      const c = G.cells[j * G.cols + i];
+      if (!c) continue;
+      const pad = (reach + 2) * c.m;
+      add(c.b[0] + (ax - i * Sw) * c.m, c.b[1] + (ay - j * Sh) * c.m, pad);
+      add(c.b[0] + (bx - i * Sw) * c.m, c.b[1] + (by - j * Sh) * c.m, pad);
+      jMin = Math.min(jMin, c.m);
+    }
+  } else if (G.mode === 2) {
+    const fx0 = Math.max(rect[0], 0), fy0 = Math.max(rect[1], 0);
+    const fx1 = Math.min(rect[2], G.frame[0]), fy1 = Math.min(rect[3], G.frame[1]);
+    if (fx1 > fx0 && fy1 > fy0) {
+      const N = 96;
+      const pt = (x, y) => {
+        const [ix, iy, J] = fishPoint(G, x, y);
+        add(ix, iy, (reach + 2) * J);
+        jMin = Math.min(jMin, J);
+      };
+      for (let i = 0; i <= N; i++) {
+        const u = i / N;
+        pt(fx0 + (fx1 - fx0) * u, fy0); pt(fx0 + (fx1 - fx0) * u, fy1);
+        pt(fx0, fy0 + (fy1 - fy0) * u); pt(fx1, fy0 + (fy1 - fy0) * u);
+      }
+      const cxF = G.frame[0] / 2, cyF = G.frame[1] / 2;
+      if (cxF >= fx0 && cxF <= fx1 && cyF >= fy0 && cyF <= fy1) pt(cxF, cyF);
+      // the rim column/row through the centre bounds the bulge when the rect straddles an axis
+      if (cxF >= fx0 && cxF <= fx1) { pt(cxF, Math.min(Math.max(cyF, fy0), fy1)); }
+      if (cyF >= fy0 && cyF <= fy1) { pt(Math.min(Math.max(cxF, fx0), fx1), cyF); }
+    }
+  }
+  if (!(x1 > x0)) return null;
+  return { rect: [x0, y0, x1, y1], jMin };
 }
 
 /**
@@ -409,6 +700,13 @@ export function lensUniforms(camera, camAmt = 1) {
  * distortion + CA + blur kernel / clarity ring. The exporter adds this to PAD for strips.
  */
 export function lensReach(camera, camAmt, frameW, frameH) {
+  // multi-lens grid: the lens works per cell (the exporter scales this by the cell magnification)
+  const gr = camera && camera.grid;
+  if (gr) {
+    const land = frameW >= frameH;
+    frameW /= Math.max(1, land ? gr.cols : gr.rows);
+    frameH /= Math.max(1, land ? gr.rows : gr.cols);
+  }
   const L = lensUniforms(camera, camAmt);
   const short = Math.min(frameW, frameH), hd = 0.5 * Math.hypot(frameW, frameH);
   const dist = Math.abs(L.dist) * 0.4 * hd;
@@ -510,8 +808,9 @@ export class Renderer {
     };
   }
 
+  /** Source texture (mipmapped: remapped lenses minify it — see uTexK / gLod). */
   setSource(src) {
-    this._upload('src', src);
+    this._upload('src', src, true);
     const w = src.naturalWidth || src.videoWidth || src.width;
     const h = src.naturalHeight || src.videoHeight || src.height;
     this.srcSize = [w, h];
@@ -617,13 +916,15 @@ export class Renderer {
     this._draw({
       img: G.img, crop: G.crop, inner: G.inner, outFull: G.outFull,
       srcOrigin: [0, 0], srcSize: [w, h], outOrigin: [0, 0], outSize: [ow, oh],
-      scale: Math.min(G.crop[2], G.crop[3]) / fullShort, flip: true,
+      scale: Math.min(G.crop[2], G.crop[3]) / fullShort, flip: true, texK: 1,
     });
   }
 
   // full = whole source image size (render px). Optional: crop [x,y,w,h] (frame inside the
   // image, default whole image), inner [x,y] (frame origin in output), outFull [w,h] (output size).
-  renderRegion({ srcOrigin, srcSize, full, outOrigin, outSize, scale, crop, inner, outFull }) {
+  // texK = source texels per image render px (the exporter may upload a remapped strip's source
+  // region downsampled; default 1).
+  renderRegion({ srcOrigin, srcSize, full, outOrigin, outSize, scale, crop, inner, outFull, texK }) {
     if (this.lost) throw new Error('webgl-context-lost');
     const gl = this.gl;
     const [w, h] = outSize;
@@ -640,7 +941,7 @@ export class Renderer {
     const cr = crop || [0, 0, full[0], full[1]];
     this._draw({
       img: full, crop: cr, inner: inner || [0, 0], outFull: outFull || [cr[2], cr[3]],
-      srcOrigin, srcSize, outOrigin, outSize, scale: num(scale, 1), flip: false,
+      srcOrigin, srcSize, outOrigin, outSize, scale: num(scale, 1), flip: false, texK: num(texK, 1),
     });
     const out = new Uint8Array(w * h * 4);
     gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, out);
@@ -774,6 +1075,38 @@ export class Renderer {
     gl.uniform1f(u.uFrameFilm, layout && layout.filmBorder ? 1 : 0);
     gl.uniform2f(u.uFrameOrigin, fg ? fg.origin[0] : 0, fg ? fg.origin[1] : 0);
     gl.uniform2f(u.uFrameSize, fg ? Math.max(1, fg.size[0]) : 1, fg ? Math.max(1, fg.size[1]) : 1);
+
+    // remapped lenses (grid / fisheye), axis vignette, slit banding, flash gel
+    const RG = remapGeometry(P.camera, g.img, g.crop, num(P.seed, 1));
+    gl.uniform1i(u.uMode, RG ? RG.mode : 0);
+    gl.uniform1f(u.uTexK, num(g.texK, 1));
+    if (RG && RG.mode === 1) {
+      const A = new Float32Array(4 * GRID_MAX), B = new Float32Array(3 * GRID_MAX).fill(1);
+      RG.cells.forEach((c, i) => { A.set([c.b[0], c.b[1], c.m, c.expo], i * 4); B.set(c.wb, i * 3); });
+      gl.uniform2f(u.uGridN, RG.cols, RG.rows);
+      gl.uniform4fv(u.uCellA, A);
+      gl.uniform3fv(u.uCellB, B);
+      gl.uniform3f(u.uGap, RG.gapCore, RG.gapFeather, RG.gapLuma);
+    } else {
+      gl.uniform2f(u.uGridN, 1, 1);
+    }
+    if (RG && RG.mode === 2) {
+      gl.uniform4f(u.uFish, RG.R, RG.phi, RG.tanPhi, RG.rim);
+      gl.uniform4f(u.uFishS, RG.sc[0], RG.sc[1], RG.sh[0], RG.sh[1]);
+    } else {
+      gl.uniform4f(u.uFish, 1, 1, 1, 0);
+      gl.uniform4f(u.uFishS, 0, 0, 1, 1);
+    }
+    gl.uniform1f(u.uVigAxis, Lu.vigAxis);
+    gl.uniform1f(u.uBand, Lu.band);
+    gl.uniform1f(u.uSwirl, Lu.swirl);
+    const gel = Array.isArray(P.gel) && P.gel.length >= 3 ? P.gel : null;
+    if (gel && flash > 0) {
+      const gl0 = 0.2126 * gel[0] + 0.7152 * gel[1] + 0.0722 * gel[2] || 1;
+      gl.uniform4f(u.uGel, gel[0] / gl0, gel[1] / gl0, gel[2] / gl0, 1);
+    } else {
+      gl.uniform4f(u.uGel, 1, 1, 1, 0);
+    }
 
     gl.uniform1f(u.uSplit, num(P.split, -1));
     gl.uniform1f(u.uShowOrig, P.showOriginal ? 1 : 0);

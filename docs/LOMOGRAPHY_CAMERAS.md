@@ -2,14 +2,39 @@
 
 Research for adding Lomography cameras to `js/cameras.js`. It covers 14 core cameras plus 2 variants
 (Diana Mini, Colorsplash), which were measured mainly as reference data. The machine-readable
-version, with every measured number, is `calibration/lomo-cameras.json`. Nothing in the app reads it
-yet: it is input for whoever implements this.
+version, with every measured number, is `calibration/lomo-cameras.json`. The app doesn't read it at
+runtime; the presets in `js/cameras.js` were derived from it (see *Implementation status*).
 
 Camera list source: <https://www.lomography.com/cameras> (101 cameras are listed, 27 of them
 Lomography/Lomo branded). Specs come from the camera's Lomography Shop page where it is still sold
 (`https://shop.lomography.com/ca/<slug>`). For discontinued models (LC-Wide, LC-A 120, Sprocket
 Rocket, Supersampler, Oktomat, Belair, Petzval 85) they come from Lomography's microsites, magazine
 and manual pages, and are marked *unverified* where no primary source was found.
+
+## Implementation status (2026-10)
+
+Implemented in `js/cameras.js` / `renderer.js` / `overlays.js` / `exporter.js` (contracts in
+`docs/ARCHITECTURE.md` §3, §5, §6, §9; checks in `tests/render.test.mjs` and
+`tests/remap.browser.mjs`):
+
+| capability | status | notes |
+|---|---|---|
+| 1 `gel-flash` | done | `RenderParams.gel`, `camera.flashGels`, 7 gels (`FLASH_GELS`); the flash share is scaled ×1.7 so subject casts read like the Colorsplash set |
+| 2 `sprocket-exposure` + `format-pano` | done | frame `'sprocket'`, `FMT['35mm-pano']` (2.06), always drawn (on the negative); border adds a scanner margin |
+| 3 `multi-lens-grid` | done | `camera.grid`, renderer remap mode 1; `fit:'split'` also gives the Diana Mini half-frame pair. **`shift` is per lens step** — the measured 5.5 / 14 / 12 % are against cell 0, so the presets use 3 / 7 / 3.5 % |
+| 4 `fisheye-circle` | done | `camera.fisheye`, remap mode 2. Isotropic in the centre, easing to the inscribed ellipse of the source at the rim (the p-norm "contain" edge in §4 made straight lines wobble) |
+| 5 `frame-rounded-mask` | done | `camera.mask = { type:'rounded', … }` instead of new frame names; drawn with or without a border |
+| 6 formats + `format-masks` | done | `'6x12'`, `camera.masks` (LC-Wide full/half/square, Belair 6×12/6×9/6×6, Diana Mini pair/square) as format chips |
+| 8 `swirl-arc-blur` | done (param `swirl`) | new param so `blurShape < 0` cameras (LC-A, mju-II) are unchanged; capped by the blur radius, no depth gate |
+| 9 `axis-vignette` + `slit-banding` | done | params `vigAxis`, `banding` |
+| `pano-input` (Spinner) | done | `minAspect: 4.3` — a phone pano keeps its aspect, other photos are cut to 4.3:1 |
+| 7 `kaleidoscope`, 10 `multi-exposure`, 11 `frame-overlap`/`wide-stretch`/`depth-gate` | not done | LomoApparat and Colorsplash therefore not added |
+
+Cameras added: Diana F+, Diana Mini, LC-A 120, LC-Wide, Fisheye No.2, Sprocket Rocket, Spinner 360°,
+ActionSampler, Supersampler, Oktomat, La Sardina, Simple Use, Petzval 85, Belair X 6-12. Deviations
+from the params below (tuned by eye): Diana F+ vignette 1.4, LC-A 120 1.35, Sprocket Rocket 1.4;
+Spinner vignette 0.6 / hardness 2.4 with `vigAxis 1`; Supersampler `vigAxis 0.85`; Petzval
+`swirl 1` instead of `blurShape −1`; Diana Mini as a 1.48:1 pair with a black 2.8 % divider.
 
 ## Method
 
