@@ -1,0 +1,79 @@
+{
+ "canon-ae1": {
+  "images": 36,
+  "cornerStops": -0.3,
+  "err": 0.017085736428907445,
+  "vignette": 0.26,
+  "vignetteHardness": 4.9
+ },
+ "contax-g2": {
+  "images": 28,
+  "cornerStops": 0.18,
+  "err": 0.061560939349999996,
+  "vignette": 0,
+  "vignetteHardness": 1.5
+ },
+ "holga-120n": {
+  "images": 27,
+  "cornerStops": -1.05,
+  "err": 0.002529350810572343,
+  "vignette": 0.78,
+  "vignetteHardness": 3.3
+ },
+ "konica-hexar-af": {
+  "images": 31,
+  "cornerStops": -0.86,
+  "err": 0.03672105188726278,
+  "vignette": 0.64,
+  "vignetteHardness": 1.7
+ },
+ "leica-m6": {
+  "images": 36,
+  "cornerStops": -0.58,
+  "err": 0.06786157196032178,
+  "vignette": 0.5,
+  "vignetteHardness": 1.5
+ },
+ "lomo-lca": {
+  "images": 26,
+  "cornerStops": -1.76,
+  "err": 0.021882027921493838,
+  "vignette": 1.28,
+  "vignetteHardness": 2.3
+ },
+ "nikon-fm2": {
+  "images": 36,
+  "cornerStops": -0.04,
+  "err": 0.003808427978909168,
+  "vignette": 0.04,
+  "vignetteHardness": 2.2
+ },
+ "olympus-om1": {
+  "images": 36,
+  "cornerStops": 0.17,
+  "err": 0.1705869558,
+  "vignette": 0,
+  "vignetteHardness": 1.5
+ },
+ "olympus-pen-f": {
+  "images": 25,
+  "cornerStops": 0.95,
+  "err": 1.4409526987499999,
+  "vignette": 0,
+  "vignetteHardness": 1.5
+ },
+ "pentax-k1000": {
+  "images": 36,
+  "cornerStops": -0.16,
+  "err": 0.004489044646082131,
+  "vignette": 0.12,
+  "vignetteHardness": 2.1
+ },
+ "rollei-35": {
+  "images": 9,
+  "cornerStops": -0.28,
+  "err": 0.025601860068627098,
+  "vignette": 0.24,
+  "vignetteHardness": 1.5
+ }
+}

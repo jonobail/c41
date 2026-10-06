@@ -32,6 +32,9 @@ export const FILM_DEFAULTS = Object.freeze({
   chromaCurve: null, // [5] saturation multipliers at luma 0, .25, .5, .75, 1
   lumaLock: false,   // true: sat / hsl stages preserve Rec.709 luma (hsl lum = luma scale) and
                      // compress out-of-gamut chroma instead of clipping channels. Recommended for fits.
+  hueKeep: null,     // { band: [hueShiftDeg, chromaMul] } keyed by the SCENE's (input) hue: rotates /
+                     // scales a pixel's chroma relative to the film's neutral at constant luma, after
+                     // the casts. Lets a look keep skies blue / foliage green under a strong cast.
 });
 
 export const FILMIC_DEFAULTS = Object.freeze({ slope: 1, toe: 0.3, shoulder: 0.25, blackDensity: 2.5 });
@@ -466,7 +469,17 @@ export function makeFilm(params) {
   // --- neutral axis: the grey ramp traced through `front`, tabulated by luma (0..1, NEUT_N
   //     steps). density, and hsl band weights under lumaLock, use chroma RELATIVE to this
   //     neutral, so the film's own neutral (casts / crossovers) is left untouched.
-  const relC = !isBW && (dens > 0 || (lock && doHsl));
+  // --- hueKeep: band tables indexed by input hue (degrees 0..360)
+  const doKeep = !isBW && hasHsl(Object.fromEntries(Object.entries(p.hueKeep || {})
+    .filter(([k, v]) => k in HSL_BANDS && Array.isArray(v)).map(([k, v]) => [k, [+v[0] || 0, v[1] == null ? 1 : +v[1], 0]])));
+  let KH = null, KS = null;
+  if (doKeep) {
+    const hs = {};
+    for (const [k, v] of Object.entries(p.hueKeep)) if (k in HSL_BANDS && Array.isArray(v)) hs[k] = [clampN(v[0], -90, 90, 0), clampN(v[1], 0, 4, 1), 0];
+    const t = buildHslTables(hs); KH = t.H; KS = t.S;
+  }
+
+  const relC = !isBW && (dens > 0 || (lock && doHsl) || doKeep);
   let NT = null, NTOL = null;
   const chromaOf = (dr, dg, db) => {
     const mx = dr > dg ? (dr > db ? dr : db) : (dg > db ? dg : db);
@@ -514,6 +527,38 @@ export function makeFilm(params) {
   return function film(rIn, gIn, bIn, out) {
     const o = front(rIn, gIn, bIn, out);
     let r = o[0], g = o[1], b = o[2];
+
+    // hueKeep: classify by the scene's hue (linear input), edit chroma relative to the neutral
+    if (doKeep) {
+      const mx = rIn > gIn ? (rIn > bIn ? rIn : bIn) : (gIn > bIn ? gIn : bIn);
+      const mn = rIn < gIn ? (rIn < bIn ? rIn : bIn) : (gIn < bIn ? gIn : bIn);
+      const dIn = mx - mn;
+      if (dIn > 1e-6 && mx > 0) {
+        let w = (dIn / mx - 0.1) / 0.25; w = w <= 0 ? 0 : w >= 1 ? 1 : w * w * (3 - 2 * w);
+        if (w > 0) {
+          const h = hueOf(rIn, gIn, bIn, mx, dIn), i0 = h | 0, t = h - i0;
+          const th = (KH[i0] + (KH[i0 + 1] - KH[i0]) * t) * w * (Math.PI / 180);
+          const sc = 1 + (KS[i0] + (KS[i0 + 1] - KS[i0]) * t - 1) * w;
+          let Y = LR * r + LG * g + LB * b; Y = Y > 0 ? (Y < 1 ? Y : 1) : 0;
+          const f = Y * NEUT_N, i = f | 0, u = f - i, j = i * 3;
+          const nr = NT[j] + (NT[j + 3] - NT[j]) * u, ng = NT[j + 1] + (NT[j + 4] - NT[j + 1]) * u, nb = NT[j + 2] + (NT[j + 5] - NT[j + 2]) * u;
+          const dr = r - nr, dg = g - ng, db = b - nb;
+          const yd = LR * dr + LG * dg + LB * db, cb = db - yd, cr = dr - yd;
+          const cs = Math.cos(th) * sc, sn = Math.sin(th) * sc;
+          const cb2 = cb * cs - cr * sn, cr2 = cb * sn + cr * cs;
+          const r2 = nr + yd + cr2, b2 = nb + yd + cb2;
+          const g2 = ng + (yd - LR * (yd + cr2) - LB * (yd + cb2)) / LG;
+          // keep inside 0..1 by pulling toward this luma (hue kept)
+          const Yo = LR * r2 + LG * g2 + LB * b2;
+          let k = 1;
+          const m2 = r2 > g2 ? (r2 > b2 ? r2 : b2) : (g2 > b2 ? g2 : b2);
+          const n2 = r2 < g2 ? (r2 < b2 ? r2 : b2) : (g2 < b2 ? g2 : b2);
+          if (m2 > 1 && m2 > Yo) k = Math.min(k, (1 - Yo) / (m2 - Yo));
+          if (n2 < 0 && n2 < Yo) k = Math.min(k, Yo / (Yo - n2));
+          r = Yo + (r2 - Yo) * k; g = Yo + (g2 - Yo) * k; b = Yo + (b2 - Yo) * k;
+        }
+      }
+    }
 
     // chroma relative to the film's neutral at this luma (density / lumaLock-hsl weighting)
     let Crel = 0;

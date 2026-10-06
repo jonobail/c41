@@ -262,3 +262,22 @@ test('trimBorderRect strips scan borders; samplePixels is deterministic', () => 
   const plain = MS.trimBorderRect(makeImage(50, 40, () => [0.5, 0.5, 0.5]), 50, 40);
   assert.deepEqual(plain, { x: 0, y: 0, w: 50, h: 40, trimmed: false });
 });
+
+test('hue protection: bands absent from the reference keep their chroma under a strong cast', async () => {
+  const { protectMissingHues, bandDrift } = await import('../js/match-worker.js');
+  const { poolFromU8, matchStats } = MS;
+  const s = poolFromU8(baseU8, 4000), lin = s.map(srgbToLinear);
+  const pool = { s, lin, out: new Float32Array(s.length) };
+  // a heavy warm, desaturating look; target that contains NO blue/aqua/green
+  const params = { lumaLock: true, temp: 0.4, sat: 0.55, lift: [0.09, 0.05, 0], fade: 0.12 };
+  const target = matchStats(s);
+  for (const b of [3, 4, 5]) target.band[b] = null;
+  const before = bandDrift(s, lin, renderPool(lin, params), params);
+  const p = protectMissingHues(params, pool, target);
+  const after = bandDrift(s, lin, renderPool(lin, p), p);
+  for (const b of [3, 4, 5]) {
+    if (!before[b]) continue;
+    assert.ok(Math.abs(1 - after[b].sat) < Math.abs(1 - before[b].sat) * 0.5, `band ${b}: sat ${before[b].sat} → ${after[b].sat}`);
+  }
+  assert.ok(p.hueKeep && p.hueKeep.blue, 'hueKeep set for blue');
+});

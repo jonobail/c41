@@ -526,3 +526,29 @@ test('fuzz without lumaLock: still finite and in range', () => {
   g(0.5, 0.2, NaN, o);
   for (const x of o) assert.ok(Number.isFinite(x) && x >= 0 && x <= 1);
 });
+
+test('hueKeep: keyed by scene hue, edits chroma about the neutral, leaves greys and luma alone', () => {
+  const warm = { lumaLock: true, temp: 0.4, sat: 0.6, lift: [0.08, 0.05, 0], fade: 0.1 };
+  const plain = makeFilm(warm), kept = makeFilm({ ...warm, hueKeep: { blue: [0, 2.5] } });
+  const lin = (c) => c.map((v) => srgbToLinear(v / 255));
+  const a = [0, 0, 0], b = [0, 0, 0];
+  // grey: identical
+  plain(...lin([128, 128, 128]), a); kept(...lin([128, 128, 128]), b);
+  assert.deepEqual(b.map((v) => +v.toFixed(5)), a.map((v) => +v.toFixed(5)));
+  // sky blue: bluer relative to the film's neutral, same luma
+  plain(...lin([90, 140, 210]), a); kept(...lin([90, 140, 210]), b);
+  assert.ok(Math.abs(luma(a) - luma(b)) < 0.01, `luma ${luma(a)} vs ${luma(b)}`);
+  assert.ok(b[2] - b[0] > a[2] - a[0] + 0.03, `blue-red ${a[2] - a[0]} → ${b[2] - b[0]}`);
+  // other hues untouched
+  plain(...lin([200, 60, 50]), a); kept(...lin([200, 60, 50]), b);
+  assert.ok(Math.max(...a.map((v, i) => Math.abs(v - b[i]))) < 0.002);
+  // null / empty → no-op; outputs stay in range for extreme settings
+  const f0 = makeFilm({ ...warm, hueKeep: {} }), o = [0, 0, 0];
+  f0(...lin([90, 140, 210]), o); plain(...lin([90, 140, 210]), a);
+  assert.deepEqual(o, a);
+  const ext = makeFilm({ ...warm, hueKeep: Object.fromEntries(Object.keys(HSL_BANDS).map((k) => [k, [90, 4]])) });
+  for (let i = 0; i < 500; i++) {
+    ext(Math.random() * 2, Math.random() * 2, Math.random() * 2, o);
+    assert.ok(o.every((v) => Number.isFinite(v) && v >= 0 && v <= 1), `out of range ${o}`);
+  }
+});

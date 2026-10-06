@@ -128,7 +128,7 @@ export function fitLook(baseU8, target, o = {}) {
   }
   if (cur !== fine) { cur = fine; best = loss(x); }
 
-  const params = applyVector(spec, x, NEUTRAL);
+  const params = protectMissingHues(applyVector(spec, x, NEUTRAL), fine, target);
   const fitted = matchStats(renderPool(fine.lin, params, fine.out));
   return {
     params,
@@ -140,6 +140,92 @@ export function fitLook(baseU8, target, o = {}) {
     ms: now() - t0,
     timedOut,
   };
+}
+
+// ---- hue protection ------------------------------------------------------------------------
+// A single reference only shows some hues. The global params the fit moves (temp, curves, lift…)
+// still drag every other hue along — foliage turns khaki, skies pink-grey. For each hue band the
+// reference shows little of, measure how the fitted film turns that band's chroma (angle and size,
+// relative to the film's own neutral) and undo most of it with `hueKeep`, which is keyed by the
+// scene's hue — so the look's cast and mood stay, but unseen colours keep their identity.
+const PROTECT = 0.8;           // fraction of the drift to undo for a band the reference lacks
+const BAND_CENTRES = [0, 30, 60, 120, 180, 240, 270, 300];
+const LR = 0.2126, LG = 0.7152, LB = 0.0722;
+
+function hueDeg(r, g, b) {
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  if (d < 1e-6 || mx <= 0) return null;
+  let h = mx === r ? 60 * (((g - b) / d) % 6) : mx === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+  return { h: h < 0 ? h + 360 : h, s: d / mx };
+}
+const hueDiff = (a, b) => ((a - b + 540) % 360) - 180;
+const nearestBand = (h) => {
+  let best = 0, bd = 999;
+  for (let i = 0; i < BAND_CENTRES.length; i++) {
+    const d = Math.abs(hueDiff(h, BAND_CENTRES[i]));
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+};
+const chromaVec = (r, g, b) => { const y = LR * r + LG * g + LB * b; return [b - y, r - y]; }; // (cb, cr)
+
+/** The film's neutral (grey ramp output) as a luma-indexed lookup. */
+function neutralOf(params) {
+  const fn = makeFilm(params), o = [0, 0, 0], ys = [], cs = [];
+  for (let i = 0; i <= 48; i++) {
+    const x = srgbToLinear(i / 48) * 1.0;
+    fn(x, x, x, o);
+    ys.push(LR * o[0] + LG * o[1] + LB * o[2]); cs.push([o[0], o[1], o[2]]);
+  }
+  return (y) => {
+    let k = 0; while (k < ys.length - 2 && ys[k + 1] < y) k++;
+    const t = Math.max(0, Math.min(1, (y - ys[k]) / ((ys[k + 1] - ys[k]) || 1)));
+    return cs[k].map((v, c) => v + (cs[k + 1][c] - v) * t);
+  };
+}
+
+/**
+ * Per scene-hue band: weighted mean rotation (deg) and size ratio of each pixel's chroma relative to
+ * the film's neutral, versus its original chroma. `src` = identity sRGB pool, `out` = rendered pool.
+ */
+export function bandDrift(src, lin, out, params) {
+  const N = neutralOf(params);
+  const acc = BAND_CENTRES.map(() => ({ da: 0, m0: 0, m1: 0, w: 0, n: 0 }));
+  for (let i = 0; i < src.length; i += 3) {
+    const hs = hueDeg(lin[i], lin[i + 1], lin[i + 2]);
+    if (!hs || hs.s < 0.35) continue;                            // clearly coloured scene pixels only
+    const [cb0, cr0] = chromaVec(src[i], src[i + 1], src[i + 2]);
+    const y1 = LR * out[i] + LG * out[i + 1] + LB * out[i + 2], n = N(y1);
+    const [cb1, cr1] = chromaVec(out[i] - n[0], out[i + 1] - n[1], out[i + 2] - n[2]);
+    const m0 = Math.hypot(cb0, cr0), m1 = Math.hypot(cb1, cr1);
+    if (m0 < 0.04) continue;
+    const a = acc[nearestBand(hs.h)];
+    const da = hueDiff(Math.atan2(cr1, cb1) * 180 / Math.PI, Math.atan2(cr0, cb0) * 180 / Math.PI);
+    a.da += da * m0; a.m0 += m0; a.m1 += m1; a.w += m0; a.n++;
+  }
+  return acc.map((a) => (a.n < 25 ? null : { dh: a.da / a.w, sat: a.m1 / a.m0, n: a.n }));
+}
+
+export function protectMissingHues(params, pool, target) {
+  // trust bands holding ≥ 10 % of the reference's coloured pixels; protect absent ones fully
+  const weight = HSL_ORDER.map((_, b) => PROTECT * Math.max(0, 1 - (target.band[b] ? target.band[b][2] : 0) / 0.1));
+  if (!weight.some((w) => w > 0.05)) return params;
+  let p = params;
+  for (let pass = 0; pass < 3; pass++) {
+    const drift = bandDrift(pool.s, pool.lin, renderPool(pool.lin, p, pool.out), p);
+    const keep = { ...(p.hueKeep || {}) };
+    HSL_ORDER.forEach((name, b) => {
+      const d = drift[b], w = weight[b];
+      if (w <= 0.05 || !d) return;
+      const [h, m] = keep[name] || [0, 1];
+      keep[name] = [
+        Math.max(-90, Math.min(90, h - w * d.dh)),
+        Math.max(0.5, Math.min(3, m * Math.pow(1 / Math.max(0.15, d.sat), w))),
+      ];
+    });
+    p = { ...p, hueKeep: keep };
+  }
+  return p;
 }
 
 const round = (v) => (typeof v === 'number' ? Math.round(v * 1e4) / 1e4 : Array.isArray(v) ? v.map(round)

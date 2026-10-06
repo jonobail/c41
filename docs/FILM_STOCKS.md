@@ -29,13 +29,21 @@ _The wedding & portrait standard: soft, warm skin and enormous latitude._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | 0.04 / 0 |
-| contrast | -0.15 |
-| shadows / highlights | 0.15 / 0 |
+| exposure | +0.5 EV |
+| temp / tint | 0.24 / 0 |
+| contrast | 0.266 |
+| shadows / highlights | -0.562 / -0.6 |
 | rolloff | 0.5 |
-| lift / gamma / gain | [0.01, 0.015, 0.03] / [1, 1, 1] / [1, 1, 1] |
-| saturation | 0.92 |
-| HSL [hue°, sat×, lum+] | orange [2, 1.05, 0.03]; yellow [-4, 0.9, 0]; green [-10, 0.75, -0.02]; blue [-3, 0.9, 0] |
+| tone curve | (0, 0) (0.1, 0.106) (0.25, 0.241) (0.5, 0.5) (0.75, 0.741) (0.9, 0.913) (1, 0.995) |
+| curveR (crossover) | (0.25, 0.22) (0.5, 0.496) (0.75, 0.724) |
+| curveG (crossover) | (0.25, 0.25) (0.5, 0.485) (0.75, 0.758) |
+| curveB (crossover) | (0.25, 0.246) (0.5, 0.489) (0.75, 0.821) |
+| lift / gamma / gain | [0.01, 0.015, 0.03] / [1, 1, 1] / [0.995, 1, 1.089] |
+| saturation | 0.92, vibrance 0.047, shadows×1.469 highlights×0.7 |
+| sat vs luma (0, .25, .5, .75, 1) | [0.737, 1, 1.131, 0.913, 0.978] |
+| dye density | 0.516 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | orange [19.531, 1.05, -0.054]; yellow [6.156, 1.206, 0.019]; green [-6.094, 0.597, -0.029]; blue [-17.844, 0.4, -0.022]; red [15.625, 1.197, 0.003]; aqua [-5.469, 0.759, -0.003]; purple [0, 0.672, 0]; magenta [0, 0.869, 0] |
 | grain (amount / size / colour) | 0.22 / 1 / 0.35 |
 | halation (amount, colour) | 0.06, [1, 0.35, 0.15] |
 
@@ -79,13 +87,22 @@ _Fast Portra with warmer, richer colour and more bite than its siblings._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | 0.06 / 0 |
-| contrast | -0.06 |
-| shadows / highlights | 0.1 / 0 |
-| rolloff | 0.45 |
-| lift / gamma / gain | [0.01, 0.02, 0.04] / [1, 1, 1] / [1, 1, 1] |
-| saturation | 1 |
-| HSL [hue°, sat×, lum+] | red [0, 1.08, 0]; orange [2, 1.08, 0.02]; green [-8, 0.8, -0.02] |
+| exposure | +0.5 EV |
+| temp / tint | 0.11 / 0.013 |
+| contrast | -0.556 |
+| shadows / highlights | 0.6 / 0.544 |
+| rolloff | 0.559 |
+| tone curve | (0, 0) (0.1, 0.125) (0.25, 0.241) (0.5, 0.5) (0.75, 0.879) (0.9, 0.806) (1, 0.972) |
+| curveR (crossover) | (0.25, 0.25) (0.5, 0.507) (0.75, 0.773) |
+| curveG (crossover) | (0.25, 0.265) (0.5, 0.507) (0.75, 0.735) |
+| curveB (crossover) | (0.25, 0.209) (0.5, 0.455) (0.75, 0.784) |
+| fade / whitePoint | 0.005 / 0.988 |
+| lift / gamma / gain | [0.015, 0.063, 0.008] / [1, 1, 1] / [1, 1, 1] |
+| saturation | 0.906, vibrance -0.203, shadows×1.412 highlights×1.019 |
+| sat vs luma (0, .25, .5, .75, 1) | [0.978, 1, 1.066, 0.869, 0.553] |
+| dye density | 0.016 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | red [-3.906, 0.949, 0.041]; orange [17.188, 1.036, 0.051]; green [-16.594, 0.691, -0.014]; yellow [-3.906, 0.825, -0.088]; aqua [-2.344, 0.619, 0.044]; blue [-2.344, 0.825, 0.047]; purple [0, 0.978, 0.006]; magenta [0.781, 0.934, 0] |
 | grain (amount / size / colour) | 0.38 / 1.2 / 0.4 |
 | halation (amount, colour) | 0.08, [1, 0.35, 0.15] |
 
@@ -105,10 +122,19 @@ _Kodak's 'world's finest grain' negative: vivid, punchy, slide-like._
 |---|---|
 | type | color |
 | temp / tint | 0.02 / 0 |
-| contrast | 0.25 |
-| rolloff | 0.3 |
-| saturation | 1.28, vibrance 0.1 |
-| HSL [hue°, sat×, lum+] | red [0, 1.15, 0]; orange [-3, 1.1, 0]; blue [-2, 1.2, -0.04]; green [0, 1.05, 0] |
+| contrast | 0.206 |
+| shadows / highlights | -0.075 / 0.244 |
+| rolloff | 0.063 |
+| tone curve | (0, 0.009) (0.1, 0.094) (0.25, 0.25) (0.5, 0.5) (0.75, 0.75) (0.9, 0.938) (1, 1) |
+| curveR (crossover) | (0.25, 0.243) (0.5, 0.534) (0.75, 0.75) |
+| curveG (crossover) | (0.25, 0.25) (0.5, 0.5) (0.75, 0.75) |
+| curveB (crossover) | (0.25, 0.257) (0.5, 0.489) (0.75, 0.743) |
+| lift / gamma / gain | [0.003, -0.005, 0] / [0.991, 1, 1] / [1, 1, 1.005] |
+| saturation | 0.905, vibrance 0.194, shadows×0.906 highlights×0.831 |
+| sat vs luma (0, .25, .5, .75, 1) | [1.525, 0.737, 1, 1.394, 0.444] |
+| dye density | 0.469 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | red [17.188, 1.041, 0.05]; orange [-11.719, 1.209, -0.006]; blue [-1.219, 1.266, -0.1]; green [-4.687, 0.75, 0]; yellow [-6.25, 1.175, 0.016]; aqua [-11.719, 0.759, -0.019]; purple [0.781, 0.978, 0.009]; magenta [-3.906, 1.131, 0.006] |
 | grain (amount / size / colour) | 0.08 / 0.6 / 0.3 |
 | halation (amount, colour) | 0.05, [1, 0.35, 0.15] |
 
@@ -127,12 +153,20 @@ _Consumer classic with golden, sunny warmth._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | 0.09 / 0 |
-| contrast | 0.1 |
-| rolloff | 0.35 |
-| lift / gamma / gain | [0.01, 0.005, 0] / [1, 1, 1] / [1.02, 1.01, 0.94] |
-| saturation | 1.1 |
-| HSL [hue°, sat×, lum+] | yellow [0, 1.15, 0.02]; orange [0, 1.1, 0]; green [-6, 0.92, 0] |
+| temp / tint | -0.11 / 0.1 |
+| contrast | 0.275 |
+| shadows / highlights | 0.45 / 0.056 |
+| rolloff | 0.444 |
+| tone curve | (0, 0) (0.1, 0.006) (0.25, 0.112) (0.5, 0.5) (0.75, 0.75) (0.9, 0.9) (1, 1) |
+| curveR (crossover) | (0.25, 0.288) (0.5, 0.534) (0.75, 0.75) |
+| curveG (crossover) | (0.25, 0.284) (0.5, 0.5) (0.75, 0.761) |
+| curveB (crossover) | (0.25, 0.201) (0.5, 0.384) (0.75, 0.758) |
+| fade / whitePoint | 0.026 / 1 |
+| lift / gamma / gain | [0.05, 0.005, -0.037] / [1, 1, 0.855] / [1.02, 1.01, 1.09] |
+| saturation | 1.053, vibrance -0.141, shadows×0.4 highlights×0.944 |
+| sat vs luma (0, .25, .5, .75, 1) | [0.934, 1.153, 0.847, 1.022, 1.394] |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | yellow [-21.094, 1.15, -0.058]; orange [-0.781, 1.209, -0.016]; green [-5.469, 1.161, -0.003]; red [12.5, 1, 0.013]; aqua [-8.594, 0.4, 0.081]; blue [-8.594, 0.553, 0.1]; purple [-0.781, 1.066, -0.003]; magenta [0, 1.197, 0.003] |
 | grain (amount / size / colour) | 0.3 / 0.8 / 0.4 |
 | halation (amount, colour) | 0.07, [1, 0.35, 0.15] |
 
@@ -151,12 +185,20 @@ _All-round consumer 400: warm, saturated and forgiving._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | 0.08 / 0 |
-| contrast | 0.15 |
-| rolloff | 0.35 |
-| lift / gamma / gain | [0, 0, 0] / [1, 1, 1] / [1.02, 1, 0.95] |
-| saturation | 1.15 |
-| HSL [hue°, sat×, lum+] | red [0, 1.1, 0]; yellow [-2, 1.08, 0]; green [-6, 0.95, 0] |
+| temp / tint | -0.12 / 0.2 |
+| contrast | -0.025 |
+| shadows / highlights | -0.15 / 0.225 |
+| rolloff | 0.094 |
+| tone curve | (0, 0) (0.1, 0.063) (0.25, 0.19) (0.5, 0.463) (0.75, 0.75) (0.9, 0.956) (1, 1) |
+| curveR (crossover) | (0.25, 0.288) (0.5, 0.515) (0.75, 0.754) |
+| curveG (crossover) | (0.25, 0.25) (0.5, 0.508) (0.75, 0.773) |
+| curveB (crossover) | (0.25, 0.228) (0.5, 0.429) (0.75, 0.799) |
+| fade / whitePoint | 0.016 / 0.981 |
+| lift / gamma / gain | [-0.042, 0.024, -0.024] / [1.027, 1, 1] / [1.02, 1, 0.95] |
+| saturation | 0.775, vibrance -0.016, shadows×0.925 highlights×1.037 |
+| sat vs luma (0, .25, .5, .75, 1) | [0.891, 1.197, 1.153, 1.022, 0.825] |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | red [-7.031, 0.816, -0.003]; yellow [-1.219, 1.168, -0.075]; green [-8.344, 0.884, -0.009]; orange [5.469, 0.956, 0]; aqua [-7.812, 0.65, 0.031]; blue [-25, 0.956, 0.088]; purple [0, 1, 0]; magenta [0, 0.956, 0] |
 | grain (amount / size / colour) | 0.38 / 1 / 0.45 |
 | halation (amount, colour) | 0.08, [1, 0.35, 0.15] |
 
@@ -175,13 +217,20 @@ _Budget Kodak with a soft, warm, nostalgic look._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | 0.1 / 0 |
-| contrast | 0.03 |
-| rolloff | 0.35 |
-| fade / whitePoint | 0.015 / 1 |
-| lift / gamma / gain | [0, 0, 0] / [1, 1, 1] / [1.02, 1, 0.94] |
-| saturation | 0.98 |
-| HSL [hue°, sat×, lum+] | yellow [0, 1.08, 0]; orange [0, 1.05, 0.01]; blue [0, 0.9, 0]; green [-6, 0.88, 0] |
+| temp / tint | -0.1 / 0 |
+| contrast | 0.096 |
+| shadows / highlights | -0.281 / 0.075 |
+| rolloff | 0.1 |
+| tone curve | (0, 0) (0.1, 0.125) (0.25, 0.25) (0.5, 0.5) (0.75, 0.75) (0.9, 0.906) (1, 1) |
+| curveR (crossover) | (0.25, 0.258) (0.5, 0.485) (0.75, 0.75) |
+| curveG (crossover) | (0.25, 0.235) (0.5, 0.47) (0.75, 0.75) |
+| curveB (crossover) | (0.25, 0.243) (0.5, 0.489) (0.75, 0.731) |
+| fade / whitePoint | 0.029 / 1 |
+| lift / gamma / gain | [0.005, 0, 0] / [1, 1, 1] / [1.029, 1, 0.94] |
+| saturation | 0.98, vibrance 0.281, shadows×1.131 highlights×0.775 |
+| sat vs luma (0, .25, .5, .75, 1) | [0.694, 1.066, 1.022, 0.978, 0.553] |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | yellow [-4.687, 1.058, 0.022]; orange [-10.937, 0.984, -0.053]; blue [-10.937, 0.9, -0.013]; green [-5.219, 0.575, -0.003]; red [-7.031, 1, 0.003]; aqua [-6.25, 1.503, -0.034]; purple [-0.781, 1.022, -0.003]; magenta [0, 0.913, 0] |
 | grain (amount / size / colour) | 0.35 / 0.85 / 0.45 |
 | halation (amount, colour) | 0.07, [1, 0.35, 0.15] |
 
@@ -201,10 +250,19 @@ _Portrait film for hot climates: warm, natural skin, fine grain._
 |---|---|
 | type | color |
 | temp / tint | 0.06 / 0 |
-| contrast | 0.05 |
-| rolloff | 0.4 |
-| saturation | 1.05 |
-| HSL [hue°, sat×, lum+] | orange [1, 1.04, 0.02]; green [-4, 0.95, 0] |
+| contrast | 0.466 |
+| shadows / highlights | 0.6 / 0.038 |
+| rolloff | 0.641 |
+| tone curve | (0, 0) (0.1, 0.063) (0.25, 0.25) (0.5, 0.5) (0.75, 0.767) (0.9, 0.863) (1, 1) |
+| curveR (crossover) | (0.25, 0.288) (0.5, 0.553) (0.75, 0.791) |
+| curveG (crossover) | (0.25, 0.265) (0.5, 0.56) (0.75, 0.75) |
+| curveB (crossover) | (0.25, 0.175) (0.5, 0.538) (0.75, 0.799) |
+| fade / whitePoint | 0.014 / 1 |
+| lift / gamma / gain | [0.061, 0.021, -0.05] / [1, 1, 1.036] / [0.925, 1, 1.028] |
+| saturation | 0.675, vibrance -0.234, shadows×1.131 highlights×0.7 |
+| sat vs luma (0, .25, .5, .75, 1) | [1.547, 0.825, 0.978, 0.978, 0.553] |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | orange [19.531, 1.128, 0.053]; green [-4.781, 0.884, 0.003]; red [-1.562, 0.584, -0.022]; yellow [-10.937, 0.716, -0.012]; aqua [23.438, 1.713, 0.088]; blue [18.75, 0.4, 0.1]; purple [0, 0.956, 0]; magenta [0, 0.956, 0] |
 | grain (amount / size / colour) | 0.18 / 0.6 / 0.35 |
 | halation (amount, colour) | 0.06, [1, 0.35, 0.15] |
 
@@ -223,12 +281,20 @@ _The Fuji consumer look: cool, green-leaning, vivid foliage._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | -0.02 / -0.03 |
+| temp / tint | -0.02 / -0.017 |
 | contrast | 0.15 |
-| rolloff | 0.35 |
-| lift / gamma / gain | [0, 0.015, 0.012] / [1, 1, 1] / [1, 1, 1] |
-| saturation | 1.1 |
-| HSL [hue°, sat×, lum+] | green [6, 1.2, 0]; aqua [0, 1.05, 0]; red [0, 1.05, 0]; orange [-2, 0.95, 0] |
+| shadows / highlights | -0.6 / -0.15 |
+| rolloff | 0.397 |
+| tone curve | (0, 0) (0.1, 0.094) (0.25, 0.259) (0.5, 0.425) (0.75, 0.75) (0.9, 0.9) (1, 0.995) |
+| curveR (crossover) | (0.25, 0.254) (0.5, 0.515) (0.75, 0.78) |
+| curveG (crossover) | (0.25, 0.284) (0.5, 0.504) (0.75, 0.78) |
+| curveB (crossover) | (0.25, 0.243) (0.5, 0.504) (0.75, 0.87) |
+| lift / gamma / gain | [0.066, 0.002, -0.05] / [1.145, 1, 1] / [1, 1, 1.009] |
+| saturation | 0.725, vibrance -0.016, shadows×0.794 highlights×1.188 |
+| sat vs luma (0, .25, .5, .75, 1) | [0.694, 1.175, 1.284, 0.759, 0.4] |
+| dye density | 0.313 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | green [6.781, 1.134, 0.003]; aqua [-0.781, 0.859, 0.028]; red [12.5, 0.963, 0.009]; orange [8.156, 1.3, 0.013]; yellow [-10.937, 1.044, -0.072]; blue [-3.125, 0.4, -0.006]; purple [0, 0.825, -0.003]; magenta [-0.781, 0.913, 0.003] |
 | split tone (shadow / highlight) | 170° × 0.04 / — |
 | grain (amount / size / colour) | 0.4 / 1 / 0.45 |
 | halation (amount, colour) | 0.07, [1, 0.35, 0.15] |
@@ -248,12 +314,20 @@ _Cheap and cheerful Fuji: cool-neutral with crisp greens._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | -0.02 / -0.04 |
-| contrast | 0.08 |
-| rolloff | 0.35 |
-| lift / gamma / gain | [0, 0.015, 0.015] / [1, 1, 1] / [1, 1, 1] |
-| saturation | 1 |
-| HSL [hue°, sat×, lum+] | green [4, 1.1, 0]; blue [0, 1.05, 0] |
+| temp / tint | 0.18 / 0.135 |
+| contrast | 0.43 |
+| shadows / highlights | 0.019 / 0.075 |
+| rolloff | 0.491 |
+| tone curve | (0, 0) (0.1, 0.1) (0.25, 0.25) (0.5, 0.5) (0.75, 0.75) (0.9, 0.9) (1, 1) |
+| curveR (crossover) | (0.25, 0.235) (0.5, 0.485) (0.75, 0.679) |
+| curveG (crossover) | (0.25, 0.258) (0.5, 0.489) (0.75, 0.75) |
+| curveB (crossover) | (0.25, 0.25) (0.5, 0.38) (0.75, 0.803) |
+| lift / gamma / gain | [-0.005, 0.052, -0.006] / [1, 1, 1] / [1, 1.005, 1.005] |
+| saturation | 1, vibrance 0.031, shadows×0.85 highlights×0.831 |
+| sat vs luma (0, .25, .5, .75, 1) | [0.75, 1.175, 1.153, 1.306, 0.422] |
+| dye density | 0.453 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | green [13.375, 0.663, 0.022]; blue [5.469, 0.547, -0.006]; red [23.438, 1.297, 0.022]; orange [-18.75, 1.044, -0.038]; yellow [-25, 1.241, -0.006]; aqua [9.375, 0.422, 0.013]; purple [0, 0.978, 0]; magenta [0.781, 0.891, 0] |
 | grain (amount / size / colour) | 0.33 / 0.8 / 0.4 |
 | halation (amount, colour) | 0.07, [1, 0.35, 0.15] |
 
@@ -372,12 +446,22 @@ _Budget film loved for vivid reds and bright blue skies._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | -0.02 / 0 |
-| contrast | 0.12 |
+| exposure | +0.531 EV |
+| temp / tint | -0.02 / -0.337 |
+| contrast | -0.6 |
+| shadows / highlights | 0.244 / 0.281 |
 | rolloff | 0.3 |
-| lift / gamma / gain | [0, 0.005, 0.015] / [1, 1, 1] / [1, 1, 1] |
-| saturation | 1.15 |
-| HSL [hue°, sat×, lum+] | red [0, 1.15, 0]; blue [0, 1.1, -0.02]; green [2, 1.05, 0] |
+| tone curve | (0, 0.019) (0.1, 0.169) (0.25, 0.25) (0.5, 0.5) (0.75, 0.888) (0.9, 0.838) (1, 1) |
+| curveR (crossover) | (0.25, 0.265) (0.5, 0.56) (0.75, 0.81) |
+| curveG (crossover) | (0.25, 0.235) (0.5, 0.508) (0.75, 0.75) |
+| curveB (crossover) | (0.25, 0.265) (0.5, 0.5) (0.75, 0.746) |
+| fade / whitePoint | 0.012 / 0.997 |
+| lift / gamma / gain | [0.035, 0.008, 0.042] / [1.109, 1, 1] / [1, 1, 1] |
+| saturation | 0.775, vibrance -0.141, shadows×0.812 highlights×0.55 |
+| sat vs luma (0, .25, .5, .75, 1) | [1.153, 0.422, 0.803, 0.956, 0.891] |
+| dye density | 0.297 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | red [7.813, 0.4, 0.028]; blue [-8.594, 1.275, -0.045]; green [2, 0.919, -0.003]; orange [-5.469, 1.547, 0.003]; yellow [-2.344, 0.488, -0.025]; aqua [7.813, 1, -0.028]; purple [-5.469, 0.759, 0.006]; magenta [0, 0.453, 0] |
 | grain (amount / size / colour) | 0.3 / 0.8 / 0.4 |
 | halation (amount, colour) | 0.07, [1, 0.35, 0.15] |
 
@@ -422,10 +506,12 @@ _The photojournalism legend: gritty, contrasty, endlessly forgiving._
 | Parameter | Value |
 |---|---|
 | type | bw |
-| bwMix (R,G,B) | [0.27, 0.48, 0.25] |
-| contrast | 0.3 |
-| shadows / highlights | -0.05 / 0 |
+| bwMix (R,G,B) | [0.073, 0.48, 0.456] |
+| exposure | -0.5 EV |
+| contrast | 0.581 |
+| shadows / highlights | -0.581 / 0.056 |
 | rolloff | 0.35 |
+| tone curve | (0, 0.005) (0.1, 0.1) (0.25, 0.207) (0.5, 0.5) (0.75, 0.836) (0.9, 0.988) (1, 1) |
 | grain (amount / size / colour) | 0.45 / 1 / 0 |
 | halation (amount, colour) | 0.04, [1, 0.97, 0.94] |
 
@@ -487,10 +573,12 @@ _Ilford workhorse: softer than Tri-X, superb push latitude._
 | Parameter | Value |
 |---|---|
 | type | bw |
-| bwMix (R,G,B) | [0.28, 0.48, 0.24] |
-| contrast | 0.15 |
-| shadows / highlights | 0.05 / 0 |
-| rolloff | 0.45 |
+| bwMix (R,G,B) | [0.327, 0.48, 0.037] |
+| contrast | 0.194 |
+| shadows / highlights | -0.344 / -0.525 |
+| rolloff | 0.341 |
+| tone curve | (0, 0.005) (0.1, 0.088) (0.25, 0.25) (0.5, 0.463) (0.75, 0.75) (0.9, 0.913) (1, 0.977) |
+| fade / whitePoint | 0.005 / 1 |
 | grain (amount / size / colour) | 0.45 / 1.05 / 0 |
 | halation (amount, colour) | 0.04, [1, 0.97, 0.94] |
 
@@ -509,9 +597,11 @@ _Classic medium-speed film: fine grain, rich tonality._
 | Parameter | Value |
 |---|---|
 | type | bw |
-| bwMix (R,G,B) | [0.28, 0.5, 0.22] |
-| contrast | 0.2 |
-| rolloff | 0.35 |
+| bwMix (R,G,B) | [0.062, 0.5, 0.482] |
+| contrast | -0.194 |
+| shadows / highlights | -0.187 / 0.112 |
+| rolloff | 0.288 |
+| tone curve | (0, 0) (0.1, 0.125) (0.25, 0.25) (0.5, 0.481) (0.75, 0.767) (0.9, 0.913) (1, 0.972) |
 | grain (amount / size / colour) | 0.2 / 0.7 / 0 |
 | halation (amount, colour) | 0.03, [1, 0.97, 0.94] |
 
@@ -552,9 +642,13 @@ _Core-shell crystal precision with smooth, modern tonality._
 | Parameter | Value |
 |---|---|
 | type | bw |
-| bwMix (R,G,B) | [0.3, 0.5, 0.2] |
-| contrast | 0.2 |
-| rolloff | 0.35 |
+| bwMix (R,G,B) | [0.206, 0.5, 0.256] |
+| exposure | +0.5 EV |
+| contrast | 0.266 |
+| shadows / highlights | -0.262 / 0.244 |
+| rolloff | 0.928 |
+| tone curve | (0, 0.005) (0.1, 0.094) (0.25, 0.25) (0.5, 0.5) (0.75, 0.75) (0.9, 0.9) (1, 1) |
+| fade / whitePoint | 0.005 / 1 |
 | grain (amount / size / colour) | 0.1 / 0.6 / 0 |
 | halation (amount, colour) | 0.03, [1, 0.97, 0.94] |
 
@@ -573,9 +667,12 @@ _Fine-grained modern 400 with crisp detail._
 | Parameter | Value |
 |---|---|
 | type | bw |
-| bwMix (R,G,B) | [0.29, 0.5, 0.21] |
-| contrast | 0.2 |
-| rolloff | 0.4 |
+| bwMix (R,G,B) | [0.231, 0.5, 0.257] |
+| contrast | 0.528 |
+| shadows / highlights | -0.056 / -0.15 |
+| rolloff | 0.906 |
+| tone curve | (0, 0) (0.1, 0.05) (0.25, 0.233) (0.5, 0.5) (0.75, 0.75) (0.9, 0.888) (1, 1) |
+| fade / whitePoint | 0.007 / 1 |
 | grain (amount / size / colour) | 0.32 / 0.95 / 0 |
 | halation (amount, colour) | 0.04, [1, 0.97, 0.94] |
 
@@ -594,10 +691,11 @@ _Low-light specialist: big, soft grain and moody blacks._
 | Parameter | Value |
 |---|---|
 | type | bw |
-| bwMix (R,G,B) | [0.32, 0.46, 0.22] |
-| contrast | 0.25 |
-| shadows / highlights | -0.05 / 0 |
-| rolloff | 0.4 |
+| bwMix (R,G,B) | [0.05, 0.46, 0.248] |
+| contrast | 0.381 |
+| shadows / highlights | -0.525 / -0.525 |
+| rolloff | 0.322 |
+| tone curve | (0, 0.005) (0.1, 0.1) (0.25, 0.233) (0.5, 0.444) (0.75, 0.75) (0.9, 0.938) (1, 1) |
 | grain (amount / size / colour) | 0.7 / 1.6 / 0 |
 | halation (amount, colour) | 0.06, [1, 0.97, 0.94] |
 
@@ -616,10 +714,11 @@ _Chromogenic B&W: C-41 developed, ultra-smooth with a faint print tone._
 | Parameter | Value |
 |---|---|
 | type | bw |
-| bwMix (R,G,B) | [0.3, 0.52, 0.18] |
-| contrast | -0.1 |
-| shadows / highlights | 0.05 / 0 |
-| rolloff | 0.6 |
+| bwMix (R,G,B) | [0.335, 0.52, 0.094] |
+| contrast | 0.25 |
+| shadows / highlights | -0.044 / 0.15 |
+| rolloff | 0.256 |
+| tone curve | (0, 0.005) (0.1, 0.069) (0.25, 0.25) (0.5, 0.5) (0.75, 0.75) (0.9, 0.925) (1, 1) |
 | split tone (shadow / highlight) | 220° × 0.04 / 40° × 0.05 |
 | grain (amount / size / colour) | 0.15 / 0.8 / 0 |
 | halation (amount, colour) | 0.03, [1, 0.97, 0.94] |
@@ -639,10 +738,11 @@ _Extended-red film: dark dramatic skies and glowing skin._
 | Parameter | Value |
 |---|---|
 | type | bw |
-| bwMix (R,G,B) | [0.75, 0.2, 0.05] |
-| contrast | 0.4 |
-| shadows / highlights | -0.1 / 0 |
-| rolloff | 0.3 |
+| bwMix (R,G,B) | [0.718, 0.2, 0.031] |
+| contrast | -0.125 |
+| shadows / highlights | 0.162 / 0.431 |
+| rolloff | 0.456 |
+| tone curve | (0, 0.066) (0.1, 0.213) (0.25, 0.319) (0.5, 0.5) (0.75, 0.75) (0.9, 0.906) (1, 0.986) |
 | grain (amount / size / colour) | 0.42 / 0.85 / 0 |
 | halation (amount, colour) | 0.05, [1, 0.97, 0.94] |
 
@@ -661,9 +761,11 @@ _Ortho-panchromatic super-fine film: crisp, darker reds, smooth skies._
 | Parameter | Value |
 |---|---|
 | type | bw |
-| bwMix (R,G,B) | [0.22, 0.56, 0.22] |
-| contrast | 0.25 |
-| rolloff | 0.35 |
+| bwMix (R,G,B) | [0.12, 0.56, 0.426] |
+| contrast | 0.513 |
+| shadows / highlights | 0.094 / 0.019 |
+| rolloff | 0.303 |
+| tone curve | (0, 0) (0.1, 0.094) (0.25, 0.25) (0.5, 0.463) (0.75, 0.75) (0.9, 0.944) (1, 1) |
 | grain (amount / size / colour) | 0.08 / 0.55 / 0 |
 | halation (amount, colour) | 0.03, [1, 0.97, 0.94] |
 
@@ -706,13 +808,21 @@ _Modern Kodak slide: clean, cool-neutral, crisp._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | -0.05 / 0 |
-| contrast | 0.3 |
-| shadows / highlights | -0.05 / 0 |
+| exposure | -0.5 EV |
+| temp / tint | -0.05 / 0.05 |
+| contrast | 0.778 |
+| shadows / highlights | -0.406 / 0.019 |
 | rolloff | 0.15 |
-| lift / gamma / gain | [0, 0, 0.01] / [1, 1, 1] / [1, 1, 1] |
-| saturation | 1.15 |
-| HSL [hue°, sat×, lum+] | blue [0, 1.15, -0.02]; aqua [0, 1.1, 0] |
+| tone curve | (0, 0) (0.1, 0.113) (0.25, 0.233) (0.5, 0.5) (0.75, 0.733) (0.9, 0.931) (1, 1) |
+| curveR (crossover) | (0.25, 0.258) (0.5, 0.519) (0.75, 0.705) |
+| curveG (crossover) | (0.25, 0.243) (0.5, 0.5) (0.75, 0.743) |
+| curveB (crossover) | (0.25, 0.25) (0.5, 0.47) (0.75, 0.769) |
+| fade / whitePoint | 0.007 / 1 |
+| lift / gamma / gain | [0.032, 0, 0.039] / [1, 1, 0.964] / [1, 1, 1.056] |
+| saturation | 0.775, vibrance 0.172, shadows×0.981 highlights×0.719 |
+| sat vs luma (0, .25, .5, .75, 1) | [0.891, 0.978, 0.869, 1.591, 0.4] |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | blue [-14.844, 1.084, -0.1]; aqua [23.438, 0.422, 0.013]; red [19.531, 1.613, 0.1]; orange [-25, 1.306, -0.097]; yellow [14.063, 0.4, 0.097]; green [0.781, 0.956, 0.006]; purple [-10.937, 1.328, 0.006]; magenta [10.938, 0.716, 0.003] |
 | grain (amount / size / colour) | 0.08 / 0.6 / 0.3 |
 | halation (amount, colour) | 0.04, [1, 0.35, 0.15] |
 
@@ -731,12 +841,22 @@ _The legend: warm reds and yellows, deep skies, rich contrast._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | 0.05 / 0 |
+| exposure | -0.5 EV |
+| temp / tint | -0.15 / 0 |
 | contrast | 0.38 |
-| shadows / highlights | -0.1 / 0 |
+| shadows / highlights | -0.006 / 0.394 |
 | rolloff | 0.1 |
-| saturation | 1.15 |
-| HSL [hue°, sat×, lum+] | red [3, 1.2, -0.02]; yellow [-3, 1.15, 0]; orange [0, 1.08, 0]; blue [6, 1.15, -0.08]; green [-4, 0.95, -0.02] |
+| tone curve | (0, 0) (0.1, 0.1) (0.25, 0.267) (0.5, 0.5) (0.75, 0.767) (0.9, 1) (1, 0.93) |
+| curveR (crossover) | (0.25, 0.19) (0.5, 0.5) (0.75, 0.791) |
+| curveG (crossover) | (0.25, 0.243) (0.5, 0.5) (0.75, 0.75) |
+| curveB (crossover) | (0.25, 0.25) (0.5, 0.553) (0.75, 0.776) |
+| fade / whitePoint | 0.03 / 1 |
+| lift / gamma / gain | [0.037, 0, 0] / [1.036, 1, 1] / [0.991, 1.005, 0.986] |
+| saturation | 0.775, vibrance 0.141, shadows×0.756 highlights×0.963 |
+| sat vs luma (0, .25, .5, .75, 1) | [1.088, 1.109, 0.869, 1.219, 1.044] |
+| dye density | 0.656 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | red [25, 1.003, 0.008]; yellow [-15.5, 1.391, 0.003]; orange [-8.594, 1.211, -0.031]; blue [4.438, 1.15, -0.1]; green [-14.937, 0.687, -0.029]; aqua [-15.625, 1, -0.022]; purple [-4.687, 1.197, 0]; magenta [3.125, 0.956, 0] |
 | grain (amount / size / colour) | 0.1 / 0.55 / 0.3 |
 | halation (amount, colour) | 0.04, [1, 0.35, 0.15] |
 
@@ -755,12 +875,22 @@ _Landscape saturation king: vivid, magenta-tinged, inky blacks._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | 0 / 0.05 |
-| contrast | 0.45 |
-| shadows / highlights | -0.12 / 0 |
+| exposure | -0.5 EV |
+| temp / tint | -0.2 / 0.05 |
+| contrast | 0.363 |
+| shadows / highlights | 0.48 / 0.375 |
 | rolloff | 0.1 |
-| saturation | 1.45 |
-| HSL [hue°, sat×, lum+] | red [0, 1.2, 0]; green [0, 1.15, -0.03]; blue [0, 1.05, -0.06]; magenta [0, 1.2, 0] |
+| tone curve | (0, 0) (0.1, 0.088) (0.25, 0.25) (0.5, 0.463) (0.75, 0.75) (0.9, 1) (1, 0.953) |
+| curveR (crossover) | (0.25, 0.235) (0.5, 0.478) (0.75, 0.75) |
+| curveG (crossover) | (0.25, 0.258) (0.5, 0.5) (0.75, 0.735) |
+| curveB (crossover) | (0.25, 0.265) (0.5, 0.515) (0.75, 0.735) |
+| fade / whitePoint | 0.009 / 1 |
+| lift / gamma / gain | [0, 0, 0] / [1, 1, 1] / [1.075, 1, 0.981] |
+| saturation | 1.075, vibrance 0.094, shadows×0.962 highlights×0.944 |
+| sat vs luma (0, .25, .5, .75, 1) | [1.109, 1.372, 0.913, 1.066, 0.663] |
+| dye density | 0.125 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | red [25, 0.981, 0.069]; green [-1.562, 0.8, -0.021]; blue [-5.469, 1.05, -0.1]; magenta [16.406, 0.916, 0.009]; orange [10.156, 0.925, -0.025]; yellow [4.688, 0.663, 0.044]; aqua [-4.687, 1.569, 0]; purple [-1.562, 0.694, 0.003] |
 | grain (amount / size / colour) | 0.06 / 0.45 / 0.3 |
 | halation (amount, colour) | 0.04, [1, 0.35, 0.15] |
 
@@ -803,11 +933,21 @@ _Reference slide film: accurate, neutral, moderately saturated._
 | Parameter | Value |
 |---|---|
 | type | color |
-| contrast | 0.3 |
-| shadows / highlights | -0.05 / 0 |
+| exposure | -0.5 EV |
+| temp / tint | 0 / 0.2 |
+| contrast | 0.8 |
+| shadows / highlights | 0.175 / -0.15 |
 | rolloff | 0.15 |
-| saturation | 1.12 |
-| HSL [hue°, sat×, lum+] | blue [0, 1.08, 0] |
+| tone curve | (0, 0) (0.1, 0.125) (0.25, 0.25) (0.5, 0.5) (0.75, 0.75) (0.9, 0.95) (1, 1) |
+| curveR (crossover) | (0.25, 0.28) (0.5, 0.5) (0.75, 0.66) |
+| curveG (crossover) | (0.25, 0.28) (0.5, 0.493) (0.75, 0.75) |
+| curveB (crossover) | (0.25, 0.269) (0.5, 0.384) (0.75, 0.78) |
+| fade / whitePoint | 0.023 / 1 |
+| lift / gamma / gain | [-0.011, 0, -0.011] / [1, 1, 1.018] / [1.023, 1, 1] |
+| saturation | 1.214, vibrance -0.312, shadows×1.544 highlights×0.888 |
+| sat vs luma (0, .25, .5, .75, 1) | [1.503, 1.109, 1, 1, 0.772] |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | blue [-7.812, 1.036, -0.059]; red [10.156, 0.825, -0.006]; orange [-10.937, 1.131, -0.028]; yellow [-1.562, 0.759, 0.025]; green [0.781, 1.022, 0.006]; aqua [-6.25, 0.628, 0.006]; purple [-0.781, 1.044, 0]; magenta [0, 0.794, -0.009] |
 | grain (amount / size / colour) | 0.07 / 0.6 / 0.3 |
 | halation (amount, colour) | 0.04, [1, 0.35, 0.15] |
 
@@ -921,10 +1061,19 @@ _The finest-grain motion picture negative; flat, gradable, clean._
 | Parameter | Value |
 |---|---|
 | type | color |
-| contrast | -0.1 |
-| shadows / highlights | 0.05 / 0 |
-| rolloff | 0.6 |
-| saturation | 0.95 |
+| exposure | +0.5 EV |
+| contrast | 0.272 |
+| shadows / highlights | -0.456 / -0.15 |
+| rolloff | 0.616 |
+| tone curve | (0, 0) (0.1, 0.119) (0.25, 0.25) (0.5, 0.5) (0.75, 0.75) (0.9, 0.913) (1, 0.991) |
+| curveR (crossover) | (0.25, 0.28) (0.5, 0.523) (0.75, 0.683) |
+| curveG (crossover) | (0.25, 0.299) (0.5, 0.511) (0.75, 0.743) |
+| curveB (crossover) | (0.25, 0.231) (0.5, 0.459) (0.75, 0.78) |
+| lift / gamma / gain | [0.037, 0.016, -0.05] / [1.018, 1, 1] / [1, 1, 1.075] |
+| saturation | 0.903, vibrance 0.016, shadows×0.55 highlights×0.756 |
+| sat vs luma (0, .25, .5, .75, 1) | [0.978, 0.934, 1.175, 1.241, 0.497] |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | red [22.656, 0.716, 0]; orange [9.375, 1.197, 0.006]; yellow [-7.812, 1.109, 0.006]; green [-1.562, 0.684, -0.009]; aqua [-0.781, 0.488, 0.094]; blue [-7.812, 0.891, 0.1]; purple [0.781, 0.869, 0]; magenta [0, 0.934, 0] |
 | grain (amount / size / colour) | 0.07 / 0.45 / 0.3 |
 | halation (amount, colour) | 0.04, [1, 0.35, 0.15] |
 
@@ -943,12 +1092,21 @@ _Daylight cinema negative: wide latitude, natural, soft._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | 0.02 / 0 |
-| contrast | -0.15 |
-| shadows / highlights | 0.08 / 0 |
-| rolloff | 0.65 |
-| saturation | 0.92 |
-| HSL [hue°, sat×, lum+] | orange [1, 1.02, 0.01] |
+| temp / tint | 0.02 / -0.213 |
+| contrast | 0.244 |
+| shadows / highlights | -0.145 / 0.038 |
+| rolloff | 0.922 |
+| tone curve | (0, 0.038) (0.1, 0.094) (0.25, 0.112) (0.5, 0.5) (0.75, 0.75) (0.9, 0.95) (1, 1) |
+| curveR (crossover) | (0.25, 0.246) (0.5, 0.425) (0.75, 0.735) |
+| curveG (crossover) | (0.25, 0.254) (0.5, 0.399) (0.75, 0.855) |
+| curveB (crossover) | (0.25, 0.22) (0.5, 0.391) (0.75, 0.791) |
+| fade / whitePoint | 0.005 / 1 |
+| lift / gamma / gain | [0.003, -0.042, -0.05] / [1, 1, 1] / [0.991, 1, 0.991] |
+| saturation | 0.92, vibrance -0.344, shadows×0.813 highlights×0.4 |
+| sat vs luma (0, .25, .5, .75, 1) | [1.363, 1.131, 0.913, 0.672, 1.044] |
+| dye density | 0.094 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | orange [23.438, 1.042, -0.024]; red [15.625, 0.4, -0.022]; yellow [-0.781, 1.109, 0.019]; green [-9.375, 1.044, 0.003]; aqua [2.344, 0.597, 0.034]; blue [-7.031, 0.4, 0]; purple [0, 1.109, 0]; magenta [0, 1, 0] |
 | grain (amount / size / colour) | 0.18 / 0.8 / 0.35 |
 | halation (amount, colour) | 0.08, [1, 0.35, 0.15] |
 
@@ -967,12 +1125,21 @@ _Tungsten cinema workhorse: cool in daylight, soft and filmic._
 | Parameter | Value |
 |---|---|
 | type | color |
-| temp / tint | -0.15 / 0 |
-| contrast | -0.1 |
+| exposure | -0.5 EV |
+| temp / tint | -0.162 / -0.2 |
+| contrast | 0.25 |
 | shadows / highlights | 0.05 / 0 |
-| rolloff | 0.65 |
-| lift / gamma / gain | [0, 0.01, 0.025] / [1, 1, 1] / [1, 1, 1] |
-| saturation | 0.9 |
+| rolloff | 0.9 |
+| tone curve | (0, 0.023) (0.1, 0.1) (0.25, 0.241) (0.5, 0.5) (0.75, 0.75) (0.9, 0.9) (1, 0.925) |
+| curveR (crossover) | (0.25, 0.246) (0.5, 0.504) (0.75, 0.75) |
+| curveG (crossover) | (0.25, 0.235) (0.5, 0.5) (0.75, 0.75) |
+| curveB (crossover) | (0.25, 0.216) (0.5, 0.564) (0.75, 0.75) |
+| lift / gamma / gain | [0.003, -0.03, 0.009] / [1, 1, 1.009] / [0.925, 1, 1] |
+| saturation | 0.9, vibrance 0.016, shadows×1.187 highlights×0.4 |
+| sat vs luma (0, .25, .5, .75, 1) | [1.569, 1.153, 0.978, 0.978, 1.459] |
+| dye density | 0.094 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | red [18.75, 0.497, -0.069]; orange [24.219, 0.431, -0.019]; yellow [3.906, 0.838, -0.072]; green [-7.031, 0.4, 0.072]; aqua [-11.719, 0.978, 0.1]; blue [-25, 0.978, 0.034]; purple [0.781, 0.913, 0]; magenta [7.031, 1.613, -0.028] |
 | grain (amount / size / colour) | 0.3 / 1.1 / 0.4 |
 | halation (amount, colour) | 0.1, [1, 0.35, 0.15] |
 
@@ -1062,10 +1229,22 @@ _Colour-shifting film: greens become purple, blues go teal._
 | Parameter | Value |
 |---|---|
 | type | color |
+| exposure | +0.5 EV |
+| temp / tint | 0 / 0.2 |
 | matrix | [0.75, 0.45, -0.2] [0.3, 0.05, 0.65] [-0.05, 0.75, 0.3] |
-| contrast | 0.12 |
-| rolloff | 0.3 |
-| saturation | 1.15 |
+| contrast | 0.382 |
+| shadows / highlights | -0.6 / -0.45 |
+| rolloff | 0.863 |
+| tone curve | (0, 0) (0.1, 0.1) (0.25, 0.216) (0.5, 0.519) (0.75, 0.75) (0.9, 0.894) (1, 1) |
+| curveR (crossover) | (0.25, 0.25) (0.5, 0.481) (0.75, 0.765) |
+| curveG (crossover) | (0.25, 0.25) (0.5, 0.44) (0.75, 0.75) |
+| curveB (crossover) | (0.25, 0.25) (0.5, 0.47) (0.75, 0.75) |
+| lift / gamma / gain | [0.032, 0, 0] / [1, 1, 1] / [1, 1, 1] |
+| saturation | 0.775, vibrance 0.391, shadows×0.888 highlights×0.85 |
+| sat vs luma (0, .25, .5, .75, 1) | [1.722, 1.066, 0.694, 0.737, 1.8] |
+| dye density | 0.078 |
+| lumaLock | on |
+| HSL [hue°, sat×, lum+] | red [25, 1.328, -0.053]; orange [7.031, 0.825, -0.066]; yellow [8.594, 1.109, 0]; green [-1.562, 1, 0.013]; aqua [-12.5, 1.044, 0.05]; blue [0, 0.934, 0]; purple [0, 0.934, 0]; magenta [3.906, 0.584, -0.016] |
 | grain (amount / size / colour) | 0.38 / 1 / 0.45 |
 | halation (amount, colour) | 0.07, [1, 0.35, 0.15] |
 
