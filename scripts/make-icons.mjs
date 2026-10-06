@@ -12,7 +12,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'icons');
 fs.mkdirSync(OUT, { recursive: true });
 
-import { logoArt, svgDoc as svg } from './logo.mjs';
+import { logoArt, bannerSvg, svgDoc as svg } from './logo.mjs';
 
 // The mark itself lives in scripts/logo.mjs (rings forming a "C" around "41").
 const art = () => logoArt();
@@ -22,6 +22,7 @@ const maskable = () => logoArt({ scale: 0.7 });
 fs.writeFileSync(path.join(OUT, 'favicon.svg'), svg(logoArt({ rounded: true })) + '\n');
 // transparent marks for the UI: full (empty state) and simplified (top bar, ~28 px)
 fs.writeFileSync(path.join(OUT, 'logo.svg'), svg(logoArt({ bg: null, scale: 1 })) + '\n');
+fs.writeFileSync(path.join(ROOT, 'docs', 'c41-logo.svg'), bannerSvg() + '\n');
 fs.writeFileSync(path.join(OUT, 'logo-small.svg'), svg(logoArt({ bg: null, scale: 1, rings: 2 })) + '\n');
 
 const jobs = [

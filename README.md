@@ -1,9 +1,19 @@
-# C41
+<p align="center"><img src="docs/c41-logo.svg" alt="C41" width="560"></p>
 
-A film-emulation photo editor that runs entirely in the browser, made to be installed to the iPhone
+<p align="center"><img src="docs/c41-app.png" alt="C41 on iPhone: the Warm Haze look, and the Sprocket Rocket camera exposing over the sprocket holes" width="720"></p>
+
+<p align="center">
+  A film-emulation photo editor for iPhone · Runs in the browser, installs to the home screen
+</p>
+
+C41 is a film-emulation photo editor that runs entirely in the browser and installs to the iPhone
 home screen as a PWA. Pick a photo, then layer a **film stock** (colour, tone, grain, halation) and a
 **camera** (lens character, vignette, format, borders), plus effects like light leaks, dust and an LED
 date stamp. Save the result at full resolution. Nothing leaves the device.
+
+**Live demo:** https://jonobail.github.io/c41/
+
+## Features
 
 - **51 film stocks**: colour negative, B&W, slide, cinema and specialty. 27 of them are calibrated
   against statistics of real photos shot on that stock ([calibration/](calibration/README.md)).
@@ -39,3 +49,6 @@ testing on an iPhone over Tailscale and installing to the home screen.
 Film and camera names are used only to describe the looks being emulated. C41 isn't affiliated with
 any film or camera maker. The calibration reference photos are downloaded locally to compute
 statistics and aren't included in this repository.
+
+The screenshot photo is "Hikers Enjoying Sunset" by Joshua Tree National Park (NPS), public domain,
+via [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Hikers_Enjoying_Sunset_(53366172437).jpg).

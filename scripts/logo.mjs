@@ -53,3 +53,20 @@ export function logoArt({ bg = '#0d0b09', rounded = false, scale = 0.88, ink = '
 
 export const svgDoc = (inner, size = 512) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="${size}" height="${size}">${inner}</svg>`;
+
+/**
+ * README banner (560×160): the mark beside a stroked "C41" wordmark on a dark panel. Paths only, no
+ * fonts, so GitHub renders it identically everywhere.
+ */
+export function bannerSvg() {
+  const mark = logoArt({ bg: null, scale: 1 });
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 160" width="560" height="160" role="img" aria-label="C41">
+<rect width="560" height="160" rx="12" fill="#0d0b09"/>
+<g transform="translate(76 12) scale(${136 / 512})">${mark}</g>
+<g fill="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10">
+  <path d="M321.1 48.9 A44 44 0 1 0 321.1 111.1" stroke="url(#c41-amber)" stroke-width="15"/>
+  <path d="M404 124 V36 L356 94 H426" stroke="#f3e7d3" stroke-width="15"/>
+  <path d="M444 50 L464 36 V124" stroke="#f3e7d3" stroke-width="15"/>
+</g>
+</svg>`;
+}
