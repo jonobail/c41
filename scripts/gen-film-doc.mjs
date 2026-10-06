@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { FILMS, FILM_CATEGORIES } from '../js/films.js';
-import { FILM_DEFAULTS } from '../js/film-transform.js';
+import { FILM_DEFAULTS, FILMIC_DEFAULTS } from '../js/film-transform.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, 'docs', 'FILM_STOCKS.md');
@@ -11,6 +11,7 @@ const out = join(root, 'docs', 'FILM_STOCKS.md');
 const n = (v) => (Math.round(v * 1000) / 1000).toString();
 const arr = (a) => `[${a.map(n).join(', ')}]`;
 const esc = (s) => String(s).replace(/\|/g, '\\|');
+const pts = (c) => c.map((q) => `(${n(q[0])}, ${n(q[1])})`).join(' ');
 
 function paramRows(p) {
   const P = { ...FILM_DEFAULTS, ...p };
@@ -21,9 +22,16 @@ function paramRows(p) {
   if (P.exposure) add('exposure', `${P.exposure > 0 ? '+' : ''}${n(P.exposure)} EV`);
   if (P.temp || P.tint) add('temp / tint', `${n(P.temp)} / ${n(P.tint)}`);
   if (P.matrix) add('matrix', `${arr(P.matrix.slice(0, 3))} ${arr(P.matrix.slice(3, 6))} ${arr(P.matrix.slice(6))}`);
-  add('contrast', n(P.contrast));
+  if (P.filmic) {
+    const F = { ...FILMIC_DEFAULTS, ...P.filmic };
+    add('filmic (slope / toe / shoulder / blackDensity)', `${n(F.slope)} / ${n(F.toe)} / ${n(F.shoulder)} / ${n(F.blackDensity)}`);
+  } else add('contrast', n(P.contrast));
   if (P.shadows || P.highlights) add('shadows / highlights', `${n(P.shadows)} / ${n(P.highlights)}`);
-  add('rolloff', n(P.rolloff));
+  if (!P.filmic) add('rolloff', n(P.rolloff));
+  if (Array.isArray(P.curve) && P.curve.length) add('tone curve', pts(P.curve));
+  if (P.type !== 'bw') {
+    for (const k of ['curveR', 'curveG', 'curveB']) if (Array.isArray(P[k]) && P[k].length) add(`${k} (crossover)`, pts(P[k]));
+  }
   if (P.fade || P.whitePoint !== 1) add('fade / whitePoint', `${n(P.fade)} / ${n(P.whitePoint)}`);
   if (P.lift.some((v) => v) || P.gamma.some((v) => v !== 1) || P.gain.some((v) => v !== 1)) {
     add('lift / gamma / gain', `${arr(P.lift)} / ${arr(P.gamma)} / ${arr(P.gain)}`);
@@ -33,6 +41,13 @@ function paramRows(p) {
     if (P.vibrance) s += `, vibrance ${n(P.vibrance)}`;
     if (P.satShadows !== 1 || P.satHighlights !== 1) s += `, shadows×${n(P.satShadows)} highlights×${n(P.satHighlights)}`;
     add('saturation', s);
+    if (Array.isArray(P.chromaCurve)) add('sat vs luma (0, .25, .5, .75, 1)', arr(P.chromaCurve));
+    if (P.density) {
+      let d = n(P.density);
+      if (P.densityHue) d += ` (hue × ${Object.entries(P.densityHue).map(([k, v]) => `${k} ${n(v)}`).join(', ')})`;
+      add('dye density', d);
+    }
+    if (P.lumaLock) add('lumaLock', 'on');
   }
   const hsl = Object.entries(P.hsl || {});
   if (hsl.length) add('HSL [hue°, sat×, lum+]', hsl.map(([k, v]) => `${k} ${arr(v)}`).join('; '));

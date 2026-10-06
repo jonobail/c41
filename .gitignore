@@ -2,3 +2,8 @@ node_modules/
 test-results/
 playwright-report/
 .DS_Store
+calibration/.venv/
+calibration/cache/
+calibration/reference/
+__pycache__/
+calibration/*.log

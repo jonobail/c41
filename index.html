@@ -60,13 +60,15 @@
 
     <section class="panel" id="panel">
       <nav class="tabs" role="tablist" aria-label="Edit sections">
-        <button class="tab" role="tab" id="tab-film" aria-controls="pane-film" aria-selected="true" data-tab="film">Film</button>
+        <button class="tab" role="tab" id="tab-looks" aria-controls="pane-looks" aria-selected="true" data-tab="looks">Looks</button>
+        <button class="tab" role="tab" id="tab-film" aria-controls="pane-film" aria-selected="false" data-tab="film">Film</button>
         <button class="tab" role="tab" id="tab-camera" aria-controls="pane-camera" aria-selected="false" data-tab="camera">Camera</button>
         <button class="tab" role="tab" id="tab-effects" aria-controls="pane-effects" aria-selected="false" data-tab="effects">Effects</button>
         <button class="tab" role="tab" id="tab-adjust" aria-controls="pane-adjust" aria-selected="false" data-tab="adjust">Adjust</button>
       </nav>
       <div class="panes">
-        <div class="pane" role="tabpanel" id="pane-film" aria-labelledby="tab-film" data-pane="film"></div>
+        <div class="pane" role="tabpanel" id="pane-looks" aria-labelledby="tab-looks" data-pane="looks"></div>
+        <div class="pane" role="tabpanel" id="pane-film" aria-labelledby="tab-film" data-pane="film" hidden></div>
         <div class="pane" role="tabpanel" id="pane-camera" aria-labelledby="tab-camera" data-pane="camera" hidden></div>
         <div class="pane" role="tabpanel" id="pane-effects" aria-labelledby="tab-effects" data-pane="effects" hidden></div>
         <div class="pane" role="tabpanel" id="pane-adjust" aria-labelledby="tab-adjust" data-pane="adjust" hidden></div>
@@ -76,6 +78,7 @@
 
   <input type="file" id="file-library" accept="image/*" hidden>
   <input type="file" id="file-camera" accept="image/*" capture="environment" hidden>
+  <input type="file" id="file-ref" accept="image/*" hidden>
   <noscript><p style="color:#eee;padding:24px;font-family:system-ui">C41 needs JavaScript.</p></noscript>
 </body>
 </html>

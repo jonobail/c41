@@ -20,6 +20,9 @@ export const ICONS = {
   reset: S('<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4v4h4"/>'),
   film: S('<rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 3v18M16 3v18M4 7.5h4M4 12h4M4 16.5h4M16 7.5h4M16 12h4M16 16.5h4"/>'),
   sliders: S('<path d="M5 6h9M18 6h1M5 12h3M12 12h7M5 18h11M20 18h-1"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>'),
+  wand: S('<path d="M4 20L15 9"/><path d="M13.5 7.5l3 3"/><path d="M17.5 2.8l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7z"/><path d="M8 3.5l.5 1.3 1.3.5-1.3.5L8 7.1l-.5-1.3-1.3-.5 1.3-.5z"/><path d="M19.5 13l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5z"/>'),
+  more: S('<circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"/>'),
+  trash: S('<path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/><path d="M10 11v5.5M14 11v5.5"/>'),
   sparkle: S('<path d="M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6-5.6-1.9 5.6-1.9z"/>'),
   // Camera bodies — used on camera cards (wider viewBox for nicer proportions)
   'body-slr': S('<path d="M6 13h36a3 3 0 0 1 3 3v15a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V16a3 3 0 0 1 3-3z"/><path d="M16 13l3.5-6h9L32 13"/><circle cx="24" cy="23.5" r="7"/><circle cx="24" cy="23.5" r="3.6"/><path d="M7 10h5"/><rect x="36" y="16" width="5" height="3" rx="1"/>', '0 0 48 40'),
@@ -310,6 +313,16 @@ export class Sheet {
     // next frame → transition in
     requestAnimationFrame(() => requestAnimationFrame(() => this.root.classList.add('is-open')));
     document.addEventListener('keydown', this._onKey);
+    // iOS: keep the sheet above the on-screen keyboard (fixed layers don't move with it)
+    const vv = window.visualViewport;
+    if (vv) {
+      this._onVV = () => {
+        const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        this.panel.style.bottom = kb > 40 ? `${kb}px` : '';
+      };
+      vv.addEventListener('resize', this._onVV);
+      vv.addEventListener('scroll', this._onVV);
+    }
     setTimeout(() => { try { this.panel.focus({ preventScroll: true }); } catch { /* ignore */ } }, 50);
     return this;
   }
@@ -319,6 +332,10 @@ export class Sheet {
     this.isOpen = false;
     sheetStack = Math.max(0, sheetStack - 1);
     document.removeEventListener('keydown', this._onKey);
+    if (this._onVV && window.visualViewport) {
+      window.visualViewport.removeEventListener('resize', this._onVV);
+      window.visualViewport.removeEventListener('scroll', this._onVV);
+    }
     this.root.classList.remove('is-open');
     this.panel.style.transform = '';
     const done = () => { this.root.remove(); };
