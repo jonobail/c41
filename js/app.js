@@ -406,6 +406,32 @@ function decodeImage(url) {
   });
 }
 
+/** ImageBitmap first (iOS WebKit can draw large camera JPEGs from an <img> as all black), then <img>. */
+async function decodeBitmap(file) {
+  if (typeof createImageBitmap !== 'function') return null;
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    return bmp.width && bmp.height ? bmp : null;
+  } catch { return null; }
+}
+
+function disposeSource(src) {
+  if (!src) return;
+  if (typeof src.close === 'function') src.close();
+  else src.src = '';
+}
+
+/** True when a canvas came out uniformly black (failed decode/draw, not a real photo). */
+function isBlank(c) {
+  const t = mkCanvas(16, 16);
+  const g = t.getContext('2d', { willReadFrequently: true });
+  g.drawImage(c, 0, 0, 16, 16);
+  const d = g.getImageData(0, 0, 16, 16).data;
+  releaseCanvas(t);
+  for (let i = 0; i < d.length; i += 4) if (d[i] > 2 || d[i + 1] > 2 || d[i + 2] > 2) return false;
+  return true;
+}
+
 async function importFile(file) {
   if (!file) return;
   if (!S.renderer) { toast('The editor is not available on this device.', { tone: 'error' }); return; }
@@ -415,10 +441,22 @@ async function importFile(file) {
   }
   setBusy(true);
   const url = URL.createObjectURL(file);
-  let img;
+  let img = null, proxy = null;
   try {
-    img = await decodeImage(url);
-  } catch {
+    // try each decoder until one yields a non-blank proxy; keep the last result regardless
+    for (const dec of [() => decodeBitmap(file), () => decodeImage(url).catch(() => null)]) {
+      const im = await dec();
+      if (!im) continue;
+      const p = makeProxy(im, im.naturalWidth || im.width, im.naturalHeight || im.height);
+      disposeSource(img); releaseCanvas(proxy);
+      img = im; proxy = p;
+      if (!isBlank(p)) break;
+      console.warn('[C41] decoded photo drew blank, trying another decoder');
+    }
+  } catch (e) {
+    console.error('[C41] decode failed', e);
+  }
+  if (!img) {
     URL.revokeObjectURL(url);
     setBusy(false);
     toast('Couldn’t open that photo. Try a JPEG or HEIC from Photos.', { tone: 'error', duration: 5000 });
@@ -426,8 +464,7 @@ async function importFile(file) {
   }
 
   try {
-    const W = img.naturalWidth, H = img.naturalHeight;
-    const proxy = makeProxy(img, W, H);
+    const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
 
     // release the previous image
     const oldProxy = S.proxy, oldUrl = S.imgUrl, oldImg = S.img;
@@ -439,7 +476,7 @@ async function importFile(file) {
     view.width = proxy.width; view.height = proxy.height;
     releaseCanvas(oldProxy);
     if (oldUrl) URL.revokeObjectURL(oldUrl);
-    if (oldImg) oldImg.src = '';
+    disposeSource(oldImg);
 
     if (M.maps) {
       try {
