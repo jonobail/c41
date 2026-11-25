@@ -1040,6 +1040,16 @@ export class Renderer {
     this.srcSize = [w, h];
   }
 
+  /** Fast live-video texture upload for real-time camera viewfinder (skips mipmaps unless needed). */
+  updateLiveSource(src, mip = false) {
+    if (this.lost || !src) return;
+    const w = src.videoWidth || src.naturalWidth || src.width;
+    const h = src.videoHeight || src.naturalHeight || src.height;
+    if (!(w > 0 && h > 0)) return;
+    this._upload('src', src, mip);
+    this.srcSize = [w, h];
+  }
+
   setLut(halfData, N) {
     const gl = this.gl;
     if (this.lost) return;

@@ -44,6 +44,11 @@ export const ICONS = {
   zoomIn: S('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M11 8v6M8 11h6"/>'),
   zoomOut: S('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M8 11h6"/>'),
   expand: S('<path d="M6 14l6-6 6 6"/>'),
+  flipCam: S('<path d="M20 7h-3l-1.5-2h-7L7 7H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1z"/><path d="M9.5 13a2.8 2.8 0 0 1 4.6-2.1l.9.8M14.5 13a2.8 2.8 0 0 1-4.6 2.1l-.9-.8"/>'),
+  flash: S('<path d="M13 2L4.5 13.5H12L11 22l8.5-11.5H12L13 2z"/>'),
+  grid: S('<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M9.2 3.5v17M14.8 3.5v17M3.5 9.2h17M3.5 14.8h17"/>'),
+  timer: S('<circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 1.5M9.5 3h5"/>'),
+  lens: S('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2"/>'),
   // Camera bodies — used on camera cards (wider viewBox for nicer proportions)
   'body-slr': S('<path d="M6 13h36a3 3 0 0 1 3 3v15a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V16a3 3 0 0 1 3-3z"/><path d="M16 13l3.5-6h9L32 13"/><circle cx="24" cy="23.5" r="7"/><circle cx="24" cy="23.5" r="3.6"/><path d="M7 10h5"/><rect x="36" y="16" width="5" height="3" rx="1"/>', '0 0 48 40'),
   'body-rangefinder': S('<rect x="3" y="11" width="42" height="22" rx="3"/><circle cx="20" cy="22" r="7.5"/><circle cx="20" cy="22" r="4"/><rect x="34" y="14.5" width="7" height="4.5" rx="1"/><rect x="5.5" y="14.5" width="5" height="3.5" rx="1"/><path d="M33 8h7"/>', '0 0 48 40'),

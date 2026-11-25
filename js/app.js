@@ -8,6 +8,7 @@ import {
   buildGeometry, computeAutoTone, HistoryStack,
 } from './image-ops.js';
 import { ScopeView, ToneCurveEditor } from './scopes.js';
+import { LiveCamera } from './live-camera.js';
 
 const $ = (id) => document.getElementById(id);
 const app = $('app');
@@ -2490,6 +2491,555 @@ async function startExport(opts = {}) {
   sheet.setDismissible(true);
 }
 
+/* ------------------------------------------------------ real-time live camera */
+
+const CAM = {
+  open: false,
+  frozen: false,
+  capturing: false,
+  live: null,
+  renderer: null,
+  raf: 0,
+  mode: 'film',        // 'film' | 'camera' | 'looks' | 'ev'
+  timerSec: 0,         // 0 | 3 | 10
+  gridOn: false,
+  lutKey: '',
+  curveKey: '',
+  layoutKey: '',
+  layout: null,
+  frame: null,
+  mapTimer: 0,
+  tinyCanvas: null,
+  maps: null,
+  flarePoint: { x: 0.5, y: 0.3, strength: 0 },
+  evSlider: null,
+  roll: [],            // [{ file, thumbUrl }]
+  lastShot: null,
+};
+
+function camSyncTelemetry() {
+  const f = film(), c = camera();
+  const tf = $('cam-tel-film'), tc = $('cam-tel-cam');
+  if (tf) tf.textContent = `${f.name}${f.iso ? ` · ${f.iso}` : ''}`;
+  if (tc) tc.textContent = c.id === 'none' ? 'NEUTRAL' : c.name.toUpperCase();
+  const bb = $('cam-border-btn');
+  if (bb) bb.setAttribute('aria-pressed', String(!!state.borderOn));
+}
+
+function camSyncDevices() {
+  if (!CAM.live) return;
+  const info = CAM.live.info();
+  const lbl = $('cam-device-lbl');
+  if (lbl) lbl.textContent = info.activeLabel || 'Camera';
+
+  const flBtn = $('cam-flash-btn');
+  if (flBtn) flBtn.setAttribute('aria-pressed', String(info.torchOn || state.flashOn));
+
+  const pills = $('cam-lens-pills');
+  if (!pills) return;
+  if (info.devices.length > 1) {
+    pills.hidden = false;
+    pills.replaceChildren(...info.devices.map((dev) => {
+      const b = h('button', {
+        class: 'cam-lens-pill', type: 'button', role: 'radio',
+        'aria-checked': String(dev.deviceId === info.activeDeviceId),
+        text: dev.label,
+      });
+      b.addEventListener('click', async () => {
+        if (CAM.live.isDemo) {
+          CAM.live.activeDeviceId = dev.deviceId;
+          camSyncDevices();
+          return;
+        }
+        try {
+          await CAM.live.switchDevice(dev.deviceId);
+          CAM.layoutKey = '';
+          camSyncDevices();
+        } catch (e) {
+          toast('Couldn’t switch camera lens.', { tone: 'error' });
+        }
+      });
+      return b;
+    }));
+  } else {
+    pills.hidden = true;
+    pills.replaceChildren();
+  }
+}
+
+function openCameraDevicePicker() {
+  if (!CAM.live) return;
+  const info = CAM.live.info();
+  if (!info.devices.length) {
+    toast('Only one camera detected on this device.');
+    return;
+  }
+  let sheet = null;
+  const list = h('div', { class: 'menu-list' }, info.devices.map((dev) => {
+    const active = dev.deviceId === info.activeDeviceId;
+    const b = h('button', {
+      class: `menu-item ${active ? 'is-on' : ''}`, type: 'button',
+      html: `${icon('lens')}<span>${dev.label}</span><span class="menu-item-meta">${active ? 'ACTIVE' : (dev.facing === 'user' ? 'FRONT' : '')}</span>`,
+    });
+    b.addEventListener('click', async () => {
+      sheet.close();
+      if (CAM.live.isDemo) {
+        CAM.live.activeDeviceId = dev.deviceId;
+        camSyncDevices();
+        return;
+      }
+      try {
+        await CAM.live.switchDevice(dev.deviceId);
+        CAM.layoutKey = '';
+        camSyncDevices();
+      } catch {
+        toast('Couldn’t switch to that camera.', { tone: 'error' });
+      }
+    });
+    return b;
+  }));
+  sheet = new Sheet({ title: 'Select Camera', content: list });
+  sheet.open();
+}
+
+function camBuildStrip() {
+  const strip = $('cam-strip');
+  const evWrap = $('cam-ev-wrap');
+  if (!strip || !evWrap) return;
+
+  for (const b of document.querySelectorAll('.cam-mode-btn[data-cmode]')) {
+    b.setAttribute('aria-selected', String(b.dataset.cmode === CAM.mode));
+  }
+
+  if (CAM.mode === 'ev') {
+    strip.hidden = true;
+    evWrap.hidden = false;
+    if (!CAM.evSlider) {
+      CAM.evSlider = new Slider({
+        label: 'Live Exposure', min: -2, max: 2, step: 0.05,
+        value: state.exposure, defaultValue: 0, bipolar: true, format: evFull,
+        onInput: (v) => { set('exposure', v); },
+        onChange: () => recordHistory(),
+      });
+      evWrap.replaceChildren(CAM.evSlider.el);
+    } else {
+      CAM.evSlider.set(state.exposure);
+    }
+    return;
+  }
+
+  strip.hidden = false;
+  evWrap.hidden = true;
+  strip.replaceChildren();
+
+  if (CAM.mode === 'film') {
+    for (const f of M.films.FILMS) {
+      const sw = f.swatch?.[0] || '#f5a524';
+      const b = h('button', {
+        class: 'cam-chip', type: 'button', role: 'radio',
+        'aria-checked': String(f.id === state.filmId),
+      },
+      h('i', { class: 'cam-chip-sw', style: { background: sw } }),
+      h('span', { text: f.name }),
+      f.iso ? h('span', { class: 'cam-chip-meta', text: String(f.iso) }) : null);
+      b.addEventListener('click', () => {
+        selectFilm(f.id);
+        camBuildStrip();
+        camSyncTelemetry();
+      });
+      strip.append(b);
+    }
+  } else if (CAM.mode === 'camera') {
+    for (const c of M.cameras.CAMERAS) {
+      const b = h('button', {
+        class: 'cam-chip', type: 'button', role: 'radio',
+        'aria-checked': String(c.id === state.cameraId),
+      },
+      h('span', { text: c.name }),
+      c.id !== 'none' ? h('span', { class: 'cam-chip-meta', text: c.badge || FORMAT_LABEL[c.format] || '' }) : null);
+      b.addEventListener('click', () => {
+        selectCamera(c.id);
+        CAM.layoutKey = '';
+        camBuildStrip();
+        camSyncTelemetry();
+      });
+      strip.append(b);
+    }
+  } else if (CAM.mode === 'looks' && M.looks) {
+    for (const lk of [...customLooks, ...M.looks.LOOKS]) {
+      const sw = lk.swatch?.[0] || '#f5a524';
+      const b = h('button', {
+        class: 'cam-chip', type: 'button', role: 'radio',
+        'aria-checked': String(lk.id === state.lookId),
+      },
+      h('i', { class: 'cam-chip-sw', style: { background: sw } }),
+      h('span', { text: lk.name }));
+      b.addEventListener('click', () => {
+        applyLook(lk);
+        CAM.layoutKey = '';
+        camBuildStrip();
+        camSyncTelemetry();
+      });
+      strip.append(b);
+    }
+  }
+
+  const active = strip.querySelector('[aria-checked="true"]');
+  if (active) active.scrollIntoView({ inline: 'center', block: 'nearest' });
+}
+
+function fitCamCanvas() {
+  const cv = $('cam-view'), st = $('cam-stage');
+  if (!cv || !st || !cv.width || !cv.height) return;
+  const r = st.getBoundingClientRect();
+  const k = Math.min(r.width / cv.width, r.height / cv.height);
+  const w = Math.round(cv.width * k), hh = Math.round(cv.height * k);
+  const x = Math.round((r.width - w) / 2), y = Math.round((r.height - hh) / 2);
+  Object.assign(cv.style, { width: `${w}px`, height: `${hh}px`, left: `${x}px`, top: `${y}px` });
+  const gr = $('cam-grid');
+  if (gr) Object.assign(gr.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${hh}px` });
+}
+
+function camEnsureAssets(vw, vh) {
+  const r = CAM.renderer;
+  if (!r) return;
+  const fk = filmKey();
+  if (CAM.lutKey !== fk) {
+    let lut = S.lutCache.get(fk);
+    if (!lut) {
+      lut = M.ft.buildLut(film().params);
+      S.lutCache.set(fk, lut);
+    }
+    r.setLut(lut, M.ft.LUT_SIZE);
+    CAM.lutKey = fk;
+  }
+  const ident = isCurveIdentity(state.curves);
+  const ck = ident ? 'id' : JSON.stringify(state.curves);
+  if (CAM.curveKey !== ck) {
+    CAM.curveKey = ck;
+    r.setCurveLut(ident ? null : buildCurveLut(state.curves, 256), 256);
+  }
+  ensureLeaks();
+
+  const f = film(), c = camera();
+  const asp = aspectOverrideValue();
+  const lk = `${vw}x${vh}|${c.id}:${c.maskId || ''}|${f.id}|${state.cropOn}|${state.borderOn}|${asp}|${state.seed}`;
+  if (CAM.layoutKey !== lk && M.overlays?.frameLayout) {
+    CAM.layoutKey = lk;
+    const L = M.overlays.frameLayout(vw, vh, {
+      camera: c, film: f, crop: state.cropOn, border: state.borderOn, seed: state.seed, aspectOverride: asp,
+    });
+    CAM.layout = L;
+    if (CAM.frame) { releaseCanvas(CAM.frame.canvas); CAM.frame = null; }
+    if (L.draw) {
+      const ow = Math.max(1, Math.round(L.out[0])), oh = Math.max(1, Math.round(L.out[1]));
+      const fc = mkCanvas(ow, oh);
+      try { L.draw(fc.getContext('2d'), 0, 0, 1); } catch { /* ignore */ }
+      CAM.frame = { canvas: fc, origin: [0, 0], size: [ow, oh] };
+    }
+    r.setFrame(CAM.frame);
+  }
+}
+
+function camTick(now) {
+  if (!CAM.open) return;
+  CAM.raf = requestAnimationFrame(camTick);
+  if (CAM.frozen || !CAM.live?.ready || !CAM.renderer) return;
+
+  const vw = CAM.live.width, vh = CAM.live.height;
+  if (!(vw > 0 && vh > 0)) return;
+  const c = camera();
+  const needsMip = !!(c.grid || c.fisheye);
+  CAM.renderer.updateLiveSource(CAM.live.source, needsMip);
+  camEnsureAssets(vw, vh);
+
+  // Lightweight 5Hz micro-highlight map for real-time halation & bloom in viewfinder
+  const fp = film().params || {};
+  const needsGlow = ((fp.halation?.amount || 0) * state.halation > 0.01) || ((fp.bloom || 0) > 0.01) || ((c.params?.bloom || 0) > 0.01);
+  if (needsGlow && M.maps && now - CAM.mapTimer > 200) {
+    CAM.mapTimer = now;
+    if (!CAM.tinyCanvas) CAM.tinyCanvas = mkCanvas(64, 48);
+    const th = Math.max(24, Math.round(64 * vh / vw));
+    if (CAM.tinyCanvas.height !== th) CAM.tinyCanvas.height = th;
+    const tg = CAM.tinyCanvas.getContext('2d');
+    if (CAM.live.mirrored) { tg.save(); tg.translate(64, 0); tg.scale(-1, 1); tg.drawImage(CAM.live.source, 0, 0, 64, th); tg.restore(); }
+    else tg.drawImage(CAM.live.source, 0, 0, 64, th);
+    if (CAM.maps) { releaseCanvas(CAM.maps.hmap); releaseCanvas(CAM.maps.bmap); }
+    CAM.maps = M.maps.buildMaps(CAM.tinyCanvas);
+    CAM.renderer.setMaps({ hmap: CAM.maps.hmap, bmap: CAM.maps.bmap });
+    CAM.flarePoint = CAM.maps.flare || CAM.flarePoint;
+  }
+
+  const cv = $('cam-view');
+  const w0 = cv.width, h0 = cv.height;
+  CAM.renderer.setParams(buildParams({
+    layout: CAM.layout,
+    flarePoint: CAM.flarePoint,
+    flipH: !!CAM.live.mirrored,
+    flipV: false,
+    rotate: 0,
+    straighten: 0,
+    split: -1,
+    showOriginal: false,
+    clipWarn: false,
+    fullShort: CAM.layout ? Math.min(CAM.layout.crop[2], CAM.layout.crop[3]) : Math.min(vw, vh),
+  }));
+  CAM.renderer.renderPreview();
+  if (!CAM.fitted || cv.width !== w0 || cv.height !== h0) {
+    CAM.fitted = true;
+    fitCamCanvas();
+  }
+}
+
+function camSyncRollThumb() {
+  const btn = $('cam-roll-btn'), img = $('cam-roll-img'), empty = $('cam-roll-empty'), cnt = $('cam-roll-count');
+  if (!btn) return;
+  const last = CAM.roll[CAM.roll.length - 1];
+  btn.disabled = !last;
+  if (last) {
+    img.src = last.thumbUrl;
+    img.hidden = false;
+    empty.hidden = true;
+    cnt.textContent = String(CAM.roll.length);
+    cnt.hidden = false;
+  } else {
+    img.hidden = true;
+    empty.hidden = false;
+    cnt.hidden = true;
+  }
+}
+
+function camSetReviewMode(on) {
+  CAM.frozen = on;
+  $('cam-shutter-bar').hidden = on;
+  $('cam-picker').hidden = on;
+  $('cam-review-bar').hidden = !on;
+  const lp = $('cam-lens-pills');
+  if (lp && CAM.live?.devices?.length > 1) lp.hidden = on;
+  requestAnimationFrame(fitCamCanvas);
+}
+
+async function camShoot() {
+  if (!CAM.open || CAM.capturing || CAM.frozen || !CAM.live?.ready) return;
+  CAM.capturing = true;
+  try {
+    if (CAM.timerSec > 0) {
+      const cd = $('cam-countdown');
+      cd.hidden = false;
+      for (let t = CAM.timerSec; t >= 1; t--) {
+        if (!CAM.open) return;
+        cd.textContent = String(t);
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      cd.hidden = true;
+    }
+
+    // Crisp shutter flash + haptic tap
+    navigator.vibrate?.(15);
+    const fx = $('cam-flash-fx');
+    fx.hidden = false;
+    fx.classList.add('is-pop');
+    requestAnimationFrame(() => requestAnimationFrame(() => fx.classList.remove('is-pop')));
+    setTimeout(() => { fx.hidden = true; }, 220);
+
+    // Grab a quick developed thumbnail straight from the live WebGL2 viewfinder canvas
+    const cv = $('cam-view');
+    const tc = mkCanvas(96, 96);
+    const s = Math.min(cv.width, cv.height);
+    tc.getContext('2d').drawImage(cv, (cv.width - s) / 2, (cv.height - s) / 2, s, s, 0, 0, 96, 96);
+    const thumbUrl = tc.toDataURL('image/jpeg', 0.78);
+    releaseCanvas(tc);
+
+    const file = await CAM.live.captureFile();
+    const shot = { file, thumbUrl };
+    CAM.roll.push(shot);
+    CAM.lastShot = shot;
+    camSyncRollThumb();
+    camSetReviewMode(true);
+  } catch (e) {
+    console.error('[C41] live capture failed', e);
+    toast('Couldn’t capture photo.', { tone: 'error' });
+  } finally {
+    CAM.capturing = false;
+  }
+}
+
+async function openLiveCamera({ demo = false } = {}) {
+  if (CAM.open) return;
+  const ov = $('cam-overlay');
+  ov.hidden = false;
+  CAM.open = true;
+  CAM.frozen = false;
+  CAM.capturing = false;
+  CAM.fitted = false;
+  $('cam-fallback').hidden = true;
+  camSetReviewMode(false);
+
+  if (!CAM.live) CAM.live = new LiveCamera();
+  if (!CAM.renderer) {
+    try {
+      CAM.renderer = new M.renderer.Renderer($('cam-view'));
+    } catch (e) {
+      closeLiveCamera();
+      toast('Live viewfinder requires WebGL 2.', { tone: 'error' });
+      return;
+    }
+  }
+  CAM.lutKey = ''; CAM.curveKey = ''; CAM.layoutKey = '';
+  camBuildStrip();
+  camSyncTelemetry();
+  camSyncRollThumb();
+
+  try {
+    if (demo) {
+      CAM.live.startDemoFeed();
+    } else {
+      await CAM.live.start({ facingMode: 'environment' });
+    }
+    camSyncDevices();
+    CAM.raf = requestAnimationFrame(camTick);
+  } catch (e) {
+    console.warn('[C41] live camera start failed:', e);
+    const denied = e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError';
+    const insecure = !window.isSecureContext && location.hostname !== 'localhost';
+    $('cam-fb-title').textContent = denied ? 'Camera access denied' : (insecure ? 'HTTPS needed for live camera' : 'No live camera detected');
+    $('cam-fb-msg').textContent = denied
+      ? 'Allow camera access in your browser settings, use the system camera, or test the live film viewfinder with a demo feed.'
+      : insecure
+        ? 'Browsers require HTTPS for real-time camera streaming. Use the system camera or test the live viewfinder demo.'
+        : 'Connect a camera, open on your phone, or preview real-time film emulation using the Live Demo Feed.';
+    $('cam-fallback').hidden = false;
+    camSyncDevices();
+  }
+}
+
+function closeLiveCamera() {
+  if (!CAM.open) return;
+  CAM.open = false;
+  CAM.frozen = false;
+  if (CAM.raf) { cancelAnimationFrame(CAM.raf); CAM.raf = 0; }
+  CAM.live?.stop();
+  if (CAM.frame) { releaseCanvas(CAM.frame.canvas); CAM.frame = null; }
+  if (CAM.maps) { releaseCanvas(CAM.maps.hmap); releaseCanvas(CAM.maps.bmap); CAM.maps = null; }
+  if (CAM.tinyCanvas) { releaseCanvas(CAM.tinyCanvas); CAM.tinyCanvas = null; }
+  if (CAM.renderer) { CAM.renderer.dispose(); CAM.renderer = null; }
+  const cv = $('cam-view');
+  if (cv) { cv.width = 0; cv.height = 0; }
+  CAM.fitted = false;
+  $('cam-overlay').hidden = true;
+}
+
+function initLiveCameraUi() {
+  $('cam-close').innerHTML = icon('close');
+  $('cam-grid-btn').innerHTML = icon('grid');
+  $('cam-flash-btn').innerHTML = icon('flash');
+  $('cam-flip-btn').innerHTML = icon('flipCam');
+  $('cam-roll-empty').innerHTML = icon('image');
+
+  $('cam-close').addEventListener('click', closeLiveCamera);
+  $('cam-device-btn').addEventListener('click', openCameraDevicePicker);
+
+  $('cam-grid-btn').addEventListener('click', () => {
+    CAM.gridOn = !CAM.gridOn;
+    $('cam-grid-btn').setAttribute('aria-pressed', String(CAM.gridOn));
+    $('cam-grid').hidden = !CAM.gridOn;
+    fitCamCanvas();
+  });
+
+  $('cam-timer-btn').addEventListener('click', () => {
+    CAM.timerSec = CAM.timerSec === 0 ? 3 : CAM.timerSec === 3 ? 10 : 0;
+    const b = $('cam-timer-btn');
+    b.textContent = CAM.timerSec ? `${CAM.timerSec}s` : 'OFF';
+    b.classList.toggle('is-on', CAM.timerSec > 0);
+  });
+
+  $('cam-flash-btn').addEventListener('click', async () => {
+    if (CAM.live?.torchSupported) {
+      const on = await CAM.live.setTorch(!CAM.live.torchOn);
+      $('cam-flash-btn').setAttribute('aria-pressed', String(on));
+    } else {
+      state.flashOn = !state.flashOn;
+      ctl.flashOn?.set(state.flashOn);
+      saveState();
+      $('cam-flash-btn').setAttribute('aria-pressed', String(state.flashOn));
+      toast(state.flashOn ? 'Camera Flash emulation ON' : 'Camera Flash OFF', { duration: 1500 });
+    }
+  });
+
+  $('cam-flip-btn').addEventListener('click', async () => {
+    if (!CAM.live) return;
+    try {
+      await CAM.live.flipFacing();
+      CAM.layoutKey = '';
+      camSyncDevices();
+    } catch {
+      toast('Couldn’t flip camera.', { tone: 'error' });
+    }
+  });
+
+  $('cam-border-btn').addEventListener('click', () => {
+    state.borderOn = !state.borderOn;
+    ctl.borderOn?.set(state.borderOn);
+    CAM.layoutKey = '';
+    saveState();
+    camSyncTelemetry();
+  });
+
+  for (const b of document.querySelectorAll('.cam-mode-btn[data-cmode]')) {
+    b.addEventListener('click', () => {
+      CAM.mode = b.dataset.cmode;
+      camBuildStrip();
+    });
+  }
+
+  $('cam-shutter').addEventListener('click', camShoot);
+
+  $('cam-roll-btn').addEventListener('click', async () => {
+    const shot = CAM.roll[CAM.roll.length - 1];
+    if (!shot) return;
+    closeLiveCamera();
+    await importFile(shot.file);
+  });
+
+  $('cam-rev-shoot').addEventListener('click', () => camSetReviewMode(false));
+
+  $('cam-rev-edit').addEventListener('click', async () => {
+    const shot = CAM.lastShot;
+    closeLiveCamera();
+    if (shot) await importFile(shot.file);
+  });
+
+  $('cam-rev-save').addEventListener('click', async () => {
+    const shot = CAM.lastShot;
+    closeLiveCamera();
+    if (shot) {
+      await importFile(shot.file);
+      startExport({ fmt: 'jpeg', quality: 92, maxEdge: 0, keepExif: true });
+    }
+  });
+
+  $('cam-fb-native').addEventListener('click', () => {
+    closeLiveCamera();
+    const cam = $('file-camera');
+    cam.value = '';
+    cam.click();
+  });
+
+  $('cam-fb-demo').addEventListener('click', () => {
+    $('cam-fallback').hidden = true;
+    CAM.live.startDemoFeed();
+    camSyncDevices();
+    if (!CAM.raf) CAM.raf = requestAnimationFrame(camTick);
+  });
+
+  window.addEventListener('resize', () => { if (CAM.open) fitCamCanvas(); });
+  window.addEventListener('keydown', (e) => {
+    if (!CAM.open || document.querySelector('.sheet-layer.is-open')) return;
+    if (e.key === 'Escape') { closeLiveCamera(); }
+    else if (e.code === 'Space' && !CAM.frozen) { e.preventDefault(); camShoot(); }
+  });
+}
+
 /* ------------------------------------------------------- keyboard shortcuts */
 
 function initKeyboard() {
@@ -2572,6 +3122,7 @@ function fatal(title, msg) {
 
 async function boot() {
   $('btn-import').innerHTML = icon('image');
+  $('btn-live-cam').innerHTML = icon('camera');
   $('btn-undo').innerHTML = icon('undo');
   $('btn-redo').innerHTML = icon('redo');
   $('btn-auto').innerHTML = icon('wand');
@@ -2583,7 +3134,8 @@ async function boot() {
   const pick = (input) => { input.value = ''; input.click(); };
   $('btn-import').addEventListener('click', () => pick(lib));
   $('btn-choose').addEventListener('click', () => pick(lib));
-  $('btn-take').addEventListener('click', () => pick(cam));
+  $('btn-take').addEventListener('click', () => openLiveCamera());
+  $('btn-live-cam').addEventListener('click', () => openLiveCamera());
   $('btn-sample')?.addEventListener('click', loadSamplePhoto);
   $('btn-empty-match')?.addEventListener('click', () => pick(ref));
   $('brand-home')?.addEventListener('click', (e) => { e.preventDefault(); if (S.proxy) openFilmInfo(); });
@@ -2645,6 +3197,7 @@ async function boot() {
   buildAdjustPane();
   initTabs();
   initStageGestures();
+  initLiveCameraUi();
   initKeyboard();
 
   const onResize = debounce(() => fitCanvas(), 60);
@@ -2674,7 +3227,7 @@ async function boot() {
   };
   Object.defineProperty(window, '__c41', { value: {
     state: () => state, S, M, missing, importFile, setState, startExport, startMatch,
-    loadSamplePhoto, runAutoDevelop, doUndo, doRedo,
+    loadSamplePhoto, runAutoDevelop, doUndo, doRedo, openLiveCamera, closeLiveCamera,
     applyLook: (id) => { const l = M.looks?.getLook(id, customLooks); if (l) applyLook(l); return !!l; },
     customLooks: () => customLooks,
   } });

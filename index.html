@@ -29,6 +29,7 @@
           <span class="brandmark-word">C41</span>
         </a>
         <button class="icon-btn top-photo-btn" id="btn-import" type="button" aria-label="Open photo" title="Open photo"></button>
+        <button class="icon-btn top-photo-btn" id="btn-live-cam" type="button" aria-label="Live camera" title="Live Film Camera"></button>
         <div class="tool-group history-group">
           <button class="icon-btn" id="btn-undo" type="button" aria-label="Undo" title="Undo (Ctrl+Z)" disabled></button>
           <button class="icon-btn" id="btn-redo" type="button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled></button>
@@ -80,9 +81,9 @@
           <p class="empty-sub">Analog film stocks &amp; GPU darkroom. Everything runs privately on your device.</p>
 
           <div class="empty-actions">
-            <button class="btn btn-accent btn-hero" id="btn-choose" type="button">Open Photo</button>
+            <button class="btn btn-accent btn-hero" id="btn-take" type="button">Live Film Camera</button>
             <div class="empty-actions-row">
-              <button class="btn btn-surface" id="btn-take" type="button">Camera</button>
+              <button class="btn btn-surface" id="btn-choose" type="button">Open Photo</button>
               <button class="btn btn-surface" id="btn-sample" type="button">Sample Photo</button>
             </div>
             <button class="empty-link" id="btn-empty-match" type="button">Or match the look of a reference photo</button>
@@ -133,6 +134,79 @@
       </nav>
     </section>
   </div>
+
+  <section class="cam-overlay" id="cam-overlay" hidden aria-label="Live film camera">
+    <header class="cam-top">
+      <button class="icon-btn cam-top-btn" id="cam-close" type="button" aria-label="Close camera"></button>
+      <button class="cam-device-pill" id="cam-device-btn" type="button" aria-label="Select camera lens">
+        <span class="cam-live-dot"></span>
+        <span class="cam-device-lbl" id="cam-device-lbl">Camera</span>
+        <span class="cam-device-caret">▾</span>
+      </button>
+      <div class="cam-top-actions">
+        <button class="icon-btn cam-top-btn" id="cam-grid-btn" type="button" aria-label="Toggle grid" aria-pressed="false"></button>
+        <button class="cam-timer-btn" id="cam-timer-btn" type="button" aria-label="Self timer">OFF</button>
+        <button class="icon-btn cam-top-btn" id="cam-flash-btn" type="button" aria-label="Toggle flash" aria-pressed="false"></button>
+      </div>
+    </header>
+
+    <div class="cam-stage" id="cam-stage">
+      <canvas id="cam-view" class="cam-view" aria-label="Live viewfinder"></canvas>
+      <div class="cam-grid" id="cam-grid" hidden aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="cam-telemetry" id="cam-telemetry">
+        <span id="cam-tel-film">PORTRA 400</span>
+        <span class="cam-tel-sep">·</span>
+        <span id="cam-tel-cam">NEUTRAL</span>
+      </div>
+      <div class="cam-countdown" id="cam-countdown" hidden>3</div>
+      <div class="cam-flash-fx" id="cam-flash-fx" hidden aria-hidden="true"></div>
+
+      <div class="cam-lens-pills" id="cam-lens-pills" hidden role="radiogroup" aria-label="Device lenses"></div>
+
+      <div class="cam-fallback" id="cam-fallback" hidden>
+        <h2 class="cam-fb-title" id="cam-fb-title">Camera unavailable</h2>
+        <p class="cam-fb-msg" id="cam-fb-msg">Allow camera access in your browser settings, or use the system camera.</p>
+        <div class="cam-fb-actions">
+          <button class="btn btn-accent" id="cam-fb-native" type="button">Use System Camera</button>
+          <button class="btn btn-surface" id="cam-fb-demo" type="button">Live Demo Feed</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="cam-dock">
+      <div class="cam-picker" id="cam-picker">
+        <div class="cam-mode-bar" role="tablist" aria-label="Live viewfinder controls">
+          <button class="cam-mode-btn" type="button" role="tab" data-cmode="film" aria-selected="true">Film</button>
+          <button class="cam-mode-btn" type="button" role="tab" data-cmode="camera" aria-selected="false">Camera</button>
+          <button class="cam-mode-btn" type="button" role="tab" data-cmode="looks" aria-selected="false">Looks</button>
+          <button class="cam-mode-btn" type="button" role="tab" data-cmode="ev" aria-selected="false">EV</button>
+          <button class="cam-mode-btn cam-border-btn" id="cam-border-btn" type="button" aria-pressed="false">Border</button>
+        </div>
+        <div class="cam-strip" id="cam-strip"></div>
+        <div class="cam-ev-wrap" id="cam-ev-wrap" hidden></div>
+      </div>
+
+      <div class="cam-shutter-bar" id="cam-shutter-bar">
+        <button class="cam-roll-btn" id="cam-roll-btn" type="button" aria-label="Open last photo in lab" disabled>
+          <img class="cam-roll-img" id="cam-roll-img" alt="" hidden>
+          <span class="cam-roll-empty" id="cam-roll-empty"></span>
+          <span class="cam-roll-count" id="cam-roll-count" hidden>0</span>
+        </button>
+
+        <button class="cam-shutter" id="cam-shutter" type="button" aria-label="Take photo">
+          <span class="cam-shutter-core"></span>
+        </button>
+
+        <button class="cam-flip-btn" id="cam-flip-btn" type="button" aria-label="Switch front or rear camera"></button>
+      </div>
+
+      <div class="cam-review-bar" id="cam-review-bar" hidden>
+        <button class="btn btn-surface" id="cam-rev-shoot" type="button">Keep Shooting</button>
+        <button class="btn btn-surface" id="cam-rev-edit" type="button">Edit in Lab</button>
+        <button class="btn btn-accent" id="cam-rev-save" type="button">Save</button>
+      </div>
+    </footer>
+  </section>
 
   <input type="file" id="file-library" accept="image/*" hidden>
   <input type="file" id="file-camera" accept="image/*" capture="environment" hidden>
