@@ -1,4 +1,5 @@
-// C41 — app shell: state, wiring, digital image lab, live scopes, undo/redo, import/export.
+// C41 — app shell: mobile-first thumb studio + desktop inspector, GPU Develop lab,
+// live scopes, undo/redo history, looks & full-resolution strip export.
 import { Slider, Sheet, toast, ChipGroup, Toggle, icon, h, idleLoop, debounce } from './ui.js';
 import {
   HSL_BANDS, ASPECT_PRESETS,
@@ -12,10 +13,11 @@ const $ = (id) => document.getElementById(id);
 const app = $('app');
 const stage = $('stage');
 const view = $('view');
+const panelEl = $('panel');
 
 const STORE_KEY = 'c41.state.v2';
 const LEGACY_STORE_KEY = 'c41.state.v1';
-const UI_KEY = 'c41.ui.v2';
+const UI_KEY = 'c41.ui.v3';
 const PROXY_MAX = 2048;
 const PROXY_MIN = 1200;
 const THUMB = 96;
@@ -175,7 +177,10 @@ const S = {
   camLeaks: [], camLeaksKey: '',
   layout: null, layoutKey: '', frame: null,
   split: -1, holding: false, clipWarn: false,
-  scopeOn: true,
+  scopeOn: false,
+  activeTab: 'looks',
+  activeDevSub: 'light',
+  activeColorSub: 'wb',
   zoom: 1, panX: 0, panY: 0,
   rafPending: false,
   exporting: false,
@@ -222,7 +227,8 @@ const degDelta = (v) => {
   const n = Math.round(v);
   return n === 0 ? '0°' : (n > 0 ? `+${n}°` : `−${-n}°`);
 };
-const ev = (v) => (Math.abs(v) < 0.005 ? '0.0 EV' : `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(2)} EV`);
+const ev = (v) => (Math.abs(v) < 0.005 ? '0.0' : `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}`);
+const evFull = (v) => (Math.abs(v) < 0.005 ? '0.0 EV' : `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(2)} EV`);
 const fmtBytes = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 
 function filmKey() {
@@ -249,6 +255,27 @@ const gelRgb = () => {
 function aspectOverrideValue() {
   const p = ASPECT_PRESETS.find((a) => a.id === state.aspect);
   return p ? p.ratio : null;
+}
+
+/* ----------------------------------------------------- mobile adaptive tray */
+
+function syncPanelHeight() {
+  if (!panelEl) return;
+  const tall =
+    (S.activeTab === 'adjust' && S.activeDevSub === 'curves') ||
+    (S.activeTab === 'adjust' && S.activeDevSub === 'color' && (S.activeColorSub === 'hsl' || S.activeColorSub === 'split'));
+  const mid =
+    (S.activeTab === 'film') ||
+    (S.activeTab === 'camera') ||
+    (S.activeTab === 'adjust' && S.activeDevSub === 'crop') ||
+    (S.activeTab === 'effects' && ctl.activeEffectKey === 'date');
+  const prevT = panelEl.classList.contains('is-tall');
+  const prevM = panelEl.classList.contains('is-mid');
+  panelEl.classList.toggle('is-tall', tall);
+  panelEl.classList.toggle('is-mid', !tall && mid);
+  if (prevT !== tall || prevM !== (!tall && mid)) {
+    setTimeout(fitCanvas, 240);
+  }
 }
 
 /* -------------------------------------------------------------- rendering */
@@ -385,8 +412,7 @@ function ensureLayout() {
 
 function frameSize() {
   if (S.layout) return [S.layout.crop[2], S.layout.crop[3]];
-  const geo = buildGeometry(S.fullW, S.fullH, state);
-  return geo.logImg;
+  return buildGeometry(S.fullW, S.fullH, state).logImg;
 }
 
 const rebuildDust = debounce(() => {
@@ -425,7 +451,8 @@ const rebuildDate = debounce(() => {
 
 const refreshScopes = debounce(() => {
   if (!S.proxy || S.exporting || !S.scope) return;
-  if (!S.scopeOn && !ctl.curveEditor) return;
+  const curvesVisible = S.activeTab === 'adjust' && S.activeDevSub === 'curves';
+  if (!S.scopeOn && !curvesVisible) return;
   try {
     const hist = S.scope.updateFromCanvas(view);
     if (hist && ctl.curveEditor) ctl.curveEditor.setHistogram(hist);
@@ -472,9 +499,7 @@ function resendAll() {
 /* --------------------------------------------------------------- stage fit & zoom */
 
 function resetZoom() {
-  S.zoom = 1;
-  S.panX = 0;
-  S.panY = 0;
+  S.zoom = 1; S.panX = 0; S.panY = 0;
   fitCanvas();
 }
 
@@ -488,7 +513,7 @@ function fitCanvas() {
   const cw = view.width, ch = view.height;
   if (!cw || !ch || !S.proxy) return;
   const r = stage.getBoundingClientRect();
-  const pad = r.width < 520 ? 12 : 24;
+  const pad = r.width < 600 ? 6 : 22;
   const aw = Math.max(1, r.width - pad * 2), ah = Math.max(1, r.height - pad * 2);
   const k = Math.min(aw / cw, ah / ch);
   const bw = Math.round(cw * k), bh = Math.round(ch * k);
@@ -506,8 +531,10 @@ function fitCanvas() {
 
   const zb = $('btn-zoom');
   if (zb) {
-    zb.textContent = S.zoom <= 1.01 ? 'Fit' : `${Math.round(S.zoom * 100)}%`;
-    zb.classList.toggle('is-zoomed', S.zoom > 1.01);
+    const zoomed = S.zoom > 1.01;
+    zb.hidden = !zoomed && window.innerWidth < 900;
+    zb.textContent = zoomed ? `${Math.round(S.zoom * 100)}%` : 'Fit';
+    zb.classList.toggle('is-zoomed', zoomed);
   }
 }
 
@@ -657,7 +684,6 @@ async function importFile(file) {
     S.exifDate = d;
     state.date = isoDate(d);
     state.seed = (Math.random() * 1e9) | 0;
-    // Reset per-photo orientation so a newly imported photo starts upright
     state.rotate = 0; state.flipH = false; state.flipV = false; state.straighten = 0;
     syncControls();
     saveState();
@@ -675,13 +701,17 @@ async function importFile(file) {
     $('btn-auto').disabled = false;
     $('btn-scope').disabled = false;
     $('btn-clip').disabled = false;
+    $('btn-more').disabled = false;
     $('stage-hud').hidden = false;
     $('title-pill').hidden = false;
     history.reset(state);
     syncHistoryButtons();
+    syncPanelHeight();
     updateTitle();
-    fitCanvas();
-    requestRender();
+    requestAnimationFrame(() => {
+      fitCanvas();
+      requestRender();
+    });
     buildThumbnails();
   } catch (e) {
     console.error('[C41] import failed', e);
@@ -697,7 +727,7 @@ async function loadSamplePhoto() {
     const { makeSamplePhotoFile } = await import('./sample-photo.js');
     const file = await makeSamplePhotoFile(1800, 1200);
     await importFile(file);
-    toast('Loaded Golden Coast sample photo');
+    toast('Loaded sample photo');
   } catch (e) {
     console.error('[C41] sample failed', e);
     toast('Couldn’t generate sample photo.', { tone: 'error' });
@@ -725,10 +755,7 @@ function runAutoDevelop() {
   saveState();
   recordHistory();
   requestRender();
-  toast('Auto-Developed tone & balance', {
-    action: 'Undo',
-    onAction: () => doUndo(),
-  });
+  toast('Auto-Developed', { action: 'Undo', onAction: () => doUndo() });
 }
 
 /* -------------------------------------------------------------- thumbnails */
@@ -773,9 +800,7 @@ function buildThumbnails() {
       }
       card.canvas.getContext('2d').putImageData(id, 0, 0);
       card.canvas.classList.add('is-ready');
-    } catch (e) {
-      console.warn('[C41] thumbnail failed for', f.id, e);
-    }
+    } catch { /* ignore */ }
     return i < ids.length;
   });
   buildLookThumbs();
@@ -848,6 +873,97 @@ function renderLookThumb(lin, look, canvas) {
 /* -------------------------------------------------------------- UI build */
 
 const ctl = {};
+const paramPills = new Map(); // key -> { el, valEl, fmt, def }
+
+function updateParamPill(key) {
+  const p = paramPills.get(key);
+  if (!p) return;
+  const v = state[key];
+  p.valEl.textContent = p.fmt(v);
+  p.el.classList.toggle('is-mod', Math.abs((v || 0) - p.def) > 0.004);
+}
+
+function updateAllParamPills() {
+  for (const k of paramPills.keys()) updateParamPill(k);
+}
+
+/**
+ * Helper to build a mobile dial-deck:
+ * - On desktop (>= 900px), all `.ctl` sliders show stacked simultaneously.
+ * - On mobile (< 900px), only the selected `.ctl` shows right above a sleek horizontal
+ *   scrollable `.param-strip` of pills with live readouts!
+ */
+function buildDialDeck({ items, defaultKey, extraStartPills = [], onSelect = null }) {
+  const deck = h('div', { class: 'dial-deck' });
+  const strip = h('div', { class: 'param-strip', role: 'tablist' });
+  const rows = new Map();
+  const pills = new Map();
+  let activeKey = defaultKey || items[0]?.key;
+
+  const select = (key) => {
+    activeKey = key;
+    for (const [k, r] of rows) r.classList.toggle('is-selected', k === key);
+    for (const [k, b] of pills) b.setAttribute('aria-selected', String(k === key));
+    onSelect?.(key);
+  };
+
+  for (const ep of extraStartPills) strip.append(ep);
+
+  for (const it of items) {
+    let rowEl;
+    if (it.customEl) {
+      rowEl = it.customEl;
+    } else {
+      const def = defaults()[it.key];
+      const s = new Slider({
+        label: it.label, min: it.min, max: it.max, step: it.step ?? 0.01,
+        value: state[it.key], defaultValue: def,
+        bipolar: it.bipolar ?? (it.min < 0 && it.max > 0),
+        format: it.format,
+        gradient: it.gradient || null,
+        onInput: (v) => {
+          set(it.key, v);
+          it.onInputExtra?.(v);
+        },
+        onChange: () => {
+          recordHistory();
+          it.onChangeExtra?.();
+        },
+      });
+      ctl[it.key] = s;
+      if (it.headExtra) s.head.append(it.headExtra);
+      rowEl = h('div', { class: 'ctl' }, s.el);
+      if (it.subRow) rowEl.append(it.subRow);
+
+      const valEl = h('span', { class: 'param-pill-val', text: (it.pillFmt || it.format)(state[it.key]) });
+      const pill = h('button', { class: 'param-pill', type: 'button', role: 'tab', 'aria-selected': 'false' },
+        h('span', { class: 'param-pill-lbl', text: it.short || it.label }),
+        valEl);
+      pill.addEventListener('click', () => select(it.key));
+      paramPills.set(it.key, { el: pill, valEl, fmt: it.pillFmt || it.format, def });
+      pills.set(it.key, pill);
+      strip.append(pill);
+    }
+
+    if (it.customEl) {
+      const valEl = h('span', { class: 'param-pill-val', text: it.pillVal ? it.pillVal() : '' });
+      const pill = h('button', { class: 'param-pill', type: 'button', role: 'tab', 'aria-selected': 'false' },
+        h('span', { class: 'param-pill-lbl', text: it.short || it.label }),
+        valEl);
+      pill.addEventListener('click', () => select(it.key));
+      if (it.onPillMount) it.onPillMount(pill, valEl);
+      pills.set(it.key, pill);
+      strip.append(pill);
+    }
+
+    rows.set(it.key, rowEl);
+    deck.append(rowEl);
+  }
+
+  deck.append(strip);
+  select(activeKey);
+  return { el: deck, select };
+}
 
 /* ------------------------------------------------------------------- looks */
 
@@ -879,7 +995,7 @@ function openSaveRecipeSheet() {
   const sheet = new Sheet({
     title: 'Save current recipe',
     content: h('div', { class: 'match' },
-      h('p', { class: 'export-hint', style: { textAlign: 'left' }, text: `Saves ${f.name}, camera, effects, curves, HSL, and all Develop adjustments as a reusable one-tap Look.` }),
+      h('p', { class: 'export-hint', style: { textAlign: 'left' }, text: `Saves ${f.name}, camera, effects, curves, HSL, and Develop edits as a reusable Look.` }),
       h('label', { class: 'field' }, h('span', { class: 'field-label', text: 'Look Name' }), name),
       h('div', { class: 'export-actions' }, cancel, save)),
   });
@@ -903,7 +1019,7 @@ function openSaveRecipeSheet() {
         leak: state.leak, leakStyle: state.leakStyle, dust: state.dust, flash: state.flashOn,
       },
       adjust,
-      swatch: f.swatch?.slice(0, 2) || ['#f5a623', '#24211d'],
+      swatch: f.swatch?.slice(0, 2) || ['#f5a524', '#242429'],
       created: Date.now(),
     };
     const saved = M.looks.saveCustomLook(look);
@@ -928,17 +1044,17 @@ function fillLookCards() {
   lookCards.clear();
   cards.replaceChildren();
 
-  const match = h('button', { class: 'card look look-match', type: 'button', 'aria-label': 'Match a photo — create a look from a reference image' },
+  const match = h('button', { class: 'card look look-match', type: 'button', 'aria-label': 'Match a photo' },
     h('span', { class: 'card-thumb', html: icon('wand') }),
-    h('span', { class: 'card-name', text: 'Match photo' }),
-    h('span', { class: 'card-sub', text: 'From reference' }));
+    h('span', { class: 'card-name', text: 'Match' }),
+    h('span', { class: 'card-sub', text: 'Reference' }));
   match.addEventListener('click', () => { const inp = $('file-ref'); inp.value = ''; inp.click(); });
   cards.append(match);
 
-  const saveCard = h('button', { class: 'card look look-save', type: 'button', 'aria-label': 'Save current edit as a custom look' },
+  const saveCard = h('button', { class: 'card look look-save', type: 'button', 'aria-label': 'Save current edit as a look' },
     h('span', { class: 'card-thumb', html: icon('bookmark') }),
-    h('span', { class: 'card-name', text: 'Save recipe' }),
-    h('span', { class: 'card-sub', text: 'Current edit' }));
+    h('span', { class: 'card-name', text: 'Save' }),
+    h('span', { class: 'card-sub', text: 'Recipe' }));
   saveCard.addEventListener('click', openSaveRecipeSheet);
   cards.append(saveCard);
 
@@ -1026,6 +1142,8 @@ function syncControls() {
   ctl.syncSplitSwatches?.();
   ctl.syncGeoButtons?.();
   ctl.syncDevBadges?.();
+  ctl.syncDatePill?.();
+  updateAllParamPills();
   markLook();
 }
 
@@ -1047,9 +1165,9 @@ function markLook() {
     if (look) {
       ctl.lookInfo.replaceChildren(
         h('strong', { text: look.name }),
-        h('span', { text: modified ? ' — edited. Tap the look again to restore it.' : ` — ${look.description || (look.custom ? 'Your custom recipe.' : '')}` }));
+        h('span', { text: modified ? ' · edited (tap again to restore)' : ` — ${look.description || ''}` }));
     } else {
-      ctl.lookInfo.replaceChildren(h('span', { text: 'One tap sets film, camera, colour grade & effects — or match any reference photo.' }));
+      ctl.lookInfo.replaceChildren(h('span', { text: 'One-tap film & colour recipes — or match any reference photo.' }));
     }
   }
   updateTitle(look, modified);
@@ -1102,16 +1220,13 @@ function snapshotWith(patch, maxSide = 640) {
     const g = out.getContext('2d');
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
     g.drawImage(view, 0, 0, out.width, out.height);
-  } catch (e) {
-    console.warn('[C41] snapshot failed', e);
-    out = null;
-  } finally {
+  } catch { out = null; } finally {
     state = saved;
     try {
       ensureLut(); ensureCurveLut(); ensureLeaks();
       S.renderer.setParams(buildParams());
       S.renderer.renderPreview();
-    } catch { /* next requestRender recovers */ }
+    } catch { /* ignore */ }
   }
   return out;
 }
@@ -1147,11 +1262,7 @@ async function startMatch(file) {
   try {
     mod = await import('./look-match.js');
     if (typeof mod.matchLook !== 'function') throw new Error('matchLook missing');
-  } catch (e) {
-    console.warn('[C41] look-match.js unavailable', e);
-    fail('Photo matching isn’t available yet.');
-    return;
-  }
+  } catch { fail('Photo matching isn’t available yet.'); return; }
   if (ctrl.signal.aborted) return;
 
   let res, img;
@@ -1169,12 +1280,8 @@ async function startMatch(file) {
     img = await decodeImage(refUrl).catch(() => null);
   } catch (e) {
     if (ctrl.signal.aborted || e?.name === 'AbortError') {
-      done = true;
-      if (sheet.isOpen) sheet.close();
-      toast('Match cancelled');
-      return;
+      done = true; if (sheet.isOpen) sheet.close(); toast('Match cancelled'); return;
     }
-    console.error('[C41] match failed', e);
     fail(`Couldn’t match that photo${e?.message ? ` (${e.message})` : ''}.`);
     return;
   }
@@ -1194,7 +1301,7 @@ async function startMatch(file) {
   const snap = snapshotWith(patch);
   const after = snap
     ? h('figure', { class: 'match-fig' }, snap, h('figcaption', { text: 'Your photo' }))
-    : h('figure', { class: 'match-fig is-empty' }, h('div', { class: 'match-placeholder', text: 'Open a photo to see the look on it — it’ll apply automatically.' }), h('figcaption', { text: 'Your photo' }));
+    : h('figure', { class: 'match-fig is-empty' }, h('div', { class: 'match-placeholder', text: 'Open a photo to see this look on it.' }), h('figcaption', { text: 'Your photo' }));
   const name = h('input', { class: 'text-input', type: 'text', value: look.name, maxlength: '40', 'aria-label': 'Look name', enterkeyhint: 'done', autocomplete: 'off' });
   const save = h('button', { class: 'btn btn-accent', type: 'button', html: `${icon('check')}<span>Save look</span>` });
   const discard = h('button', { class: 'btn', type: 'button', text: 'Discard' });
@@ -1211,12 +1318,12 @@ async function startMatch(file) {
   const doSave = () => {
     look.name = (name.value || '').trim() || look.name;
     const saved = M.looks.saveCustomLook(look);
-    if (!saved) { toast('Couldn’t save the look (storage full or unavailable).', { tone: 'error' }); return; }
+    if (!saved) { toast('Couldn’t save look.', { tone: 'error' }); return; }
     customLooks = M.looks.loadCustomLooks();
     fillLookCards();
     applyLook(saved);
     sheet.close();
-    toast(S.proxy ? `Saved “${saved.name}”` : `Saved “${saved.name}” — it’ll apply to the next photo you open`);
+    toast(`Saved “${saved.name}”`);
   };
   save.addEventListener('click', doSave);
   name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); name.blur(); doSave(); } });
@@ -1279,15 +1386,25 @@ function buildFilmPane() {
   const searchInput = h('input', {
     class: 'search-input',
     type: 'search',
-    placeholder: `Search ${FILMS.length} stocks (Portra, Tri-X, 800T…)`,
+    placeholder: `Search ${FILMS.length} stocks…`,
     'aria-label': 'Search film stocks',
     autocomplete: 'off',
   });
   const searchClear = h('button', { class: 'search-clear', type: 'button', hidden: true, 'aria-label': 'Clear search', html: icon('close') });
-  const searchWrap = h('div', { class: 'search-wrap' },
+  const searchWrap = h('div', { class: 'search-wrap mobile-collapsed' },
     h('span', { class: 'search-ico', html: icon('search') }),
     searchInput,
     searchClear);
+
+  const searchTog = h('button', { class: 'icon-btn film-search-toggle', type: 'button', 'aria-label': 'Search films', html: icon('search') });
+  searchTog.addEventListener('click', () => {
+    const open = searchWrap.classList.toggle('mobile-collapsed');
+    searchTog.setAttribute('aria-pressed', String(!open));
+    if (!open) searchInput.focus();
+  });
+
+  const info = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'About this film', html: icon('info') });
+  info.addEventListener('click', openFilmInfo);
 
   const chips = new ChipGroup({
     label: 'Film category',
@@ -1317,9 +1434,7 @@ function buildFilmPane() {
     const q = query.trim().toLowerCase();
     for (const f of FILMS) {
       const entry = filmCards.get(f.id);
-      const catOk = cat === 'all' || f.category === cat;
-      const qOk = !q || entry.searchHay.includes(q);
-      entry.el.hidden = !(catOk && qOk);
+      entry.el.hidden = !((cat === 'all' || f.category === cat) && (!q || entry.searchHay.includes(q)));
     }
   }
   searchInput.addEventListener('input', () => {
@@ -1334,18 +1449,16 @@ function buildFilmPane() {
   applyFilter();
 
   ctl.filmAmt = new Slider({
-    label: 'Film Strength', min: 0, max: 1.5, step: 0.01, value: state.filmAmt, defaultValue: 1, format: pct,
+    label: 'Strength', min: 0, max: 1.5, step: 0.01, value: state.filmAmt, defaultValue: 1, format: pct,
     onInput: (v) => set('filmAmt', v),
     onChange: () => recordHistory(),
   });
-  const info = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'About this film', html: icon('info') });
-  info.addEventListener('click', openFilmInfo);
 
   pane.append(
+    h('div', { class: 'film-top-row' }, chips.el, searchTog, info),
     searchWrap,
-    chips.el,
-    h('div', { class: 'row' }, ctl.filmAmt.el, info),
-    cards);
+    cards,
+    h('div', { class: 'ctl' }, ctl.filmAmt.el));
   ctl.filmCards = cards;
   ctl.filmChips = chips;
   markFilm();
@@ -1437,15 +1550,16 @@ function buildCameraPane() {
       saveState(); recordHistory(); markLook(); requestRender();
     },
   }) : null;
-  ctl.gelRow = h('div', { class: 'cam-opts', hidden: true }, h('div', { class: 'opts-label', text: 'Flash gel' }), ctl.gel?.el);
+  ctl.gelRow = h('div', { class: 'cam-opts', hidden: true }, h('div', { class: 'opts-label', text: 'Gel' }), ctl.gel?.el);
+
   pane.append(
-    chips ? h('div', { style: { paddingTop: '2px' } }, chips.el) : h('div', { class: 'pane-label', text: 'Camera & lens' }),
+    h('div', { class: 'film-top-row' }, chips ? chips.el : h('div', { class: 'pane-label', text: 'Camera' }), info),
     cards,
-    h('div', { class: 'row' }, ctl.camAmt.el, info),
+    h('div', { class: 'ctl' }, ctl.camAmt.el),
     ctl.camMaskRow,
-    h('div', { class: 'ctl cam-toggles' },
-      tog('cropOn', 'Crop to format'),
-      tog('borderOn', 'Film border'),
+    h('div', { class: 'cam-toggles' },
+      tog('cropOn', 'Crop'),
+      tog('borderOn', 'Border'),
       tog('flashOn', 'Flash')),
     ctl.gelRow);
   ctl.camCards = cards;
@@ -1525,46 +1639,45 @@ function buildAdjustPane() {
   }
 
   const showSub = (id) => {
+    S.activeDevSub = id;
     for (const [k, b] of subBtns) b.setAttribute('aria-selected', String(k === id));
     for (const [k, p] of subPanes) p.hidden = k !== id;
     saveUi({ devSub: id });
-    if (id === 'curves' && ctl.curveEditor) ctl.curveEditor.paint();
-  };
-
-  const mkSlider = (key, label, min, max, format, extra = {}) => {
-    const def = defaults()[key];
-    const s = new Slider({
-      label, min, max, step: extra.step ?? 0.01, value: state[key], defaultValue: def,
-      bipolar: extra.bipolar ?? (min < 0 && max > 0), format,
-      gradient: extra.gradient || null,
-      onInput: (v) => {
-        set(key, v);
-        extra.onInputExtra?.(v);
-      },
-      onChange: () => {
-        recordHistory();
-        extra.onChangeExtra?.();
-      },
-    });
-    ctl[key] = s;
-    return h('div', { class: 'ctl' }, s.el);
+    syncPanelHeight();
+    if (id === 'curves' && ctl.curveEditor) {
+      refreshScopes.flush();
+      ctl.curveEditor.paint();
+    }
   };
 
   // ---- 1. LIGHT ----
-  const autoBtn = h('button', { class: 'btn btn-auto-hero', type: 'button', html: `${icon('wand')}<span>Auto Develop</span>` });
-  autoBtn.addEventListener('click', runAutoDevelop);
-  const resetBtn = h('button', { class: 'btn btn-ghost', type: 'button', html: `${icon('reset')}<span>Reset</span>` });
-  resetBtn.addEventListener('click', resetAll);
+  const autoDesktop = h('button', { class: 'btn btn-auto-hero', type: 'button', html: `${icon('wand')}<span>Auto Develop</span>` });
+  autoDesktop.addEventListener('click', runAutoDevelop);
+  const resetDesktop = h('button', { class: 'btn btn-ghost', type: 'button', html: `${icon('reset')}<span>Reset</span>` });
+  resetDesktop.addEventListener('click', resetAll);
+
+  const autoPill = h('button', { class: 'param-pill param-pill-action', type: 'button' },
+    h('span', { class: 'param-pill-lbl', text: 'Auto' }),
+    h('span', { class: 'param-pill-val', text: 'Magic' }));
+  autoPill.addEventListener('click', runAutoDevelop);
+
+  const lightDeck = buildDialDeck({
+    defaultKey: 'exposure',
+    extraStartPills: [autoPill],
+    items: [
+      { key: 'exposure', label: 'Exposure', short: 'Expo', min: -2, max: 2, format: evFull, pillFmt: ev },
+      { key: 'contrast', label: 'Contrast', short: 'Contrast', min: -1, max: 1, format: signed },
+      { key: 'highlights', label: 'Highlights', short: 'High', min: -1, max: 1, format: signed },
+      { key: 'shadows', label: 'Shadows', short: 'Shadow', min: -1, max: 1, format: signed },
+      { key: 'whites', label: 'Whites', short: 'Whites', min: -1, max: 1, format: signed },
+      { key: 'blacks', label: 'Blacks', short: 'Blacks', min: -1, max: 1, format: signed },
+      { key: 'fade', label: 'Matte Fade', short: 'Fade', min: 0, max: 1, bipolar: false, format: pct },
+    ],
+  });
 
   subPanes.get('light').append(
-    h('div', { class: 'auto-bar' }, autoBtn, resetBtn),
-    mkSlider('exposure', 'Exposure', -2, 2, ev),
-    mkSlider('contrast', 'Contrast', -1, 1, signed),
-    mkSlider('highlights', 'Highlights', -1, 1, signed),
-    mkSlider('shadows', 'Shadows', -1, 1, signed),
-    mkSlider('whites', 'Whites', -1, 1, signed),
-    mkSlider('blacks', 'Blacks', -1, 1, signed),
-    mkSlider('fade', 'Matte Fade', 0, 1, pct, { bipolar: false }));
+    h('div', { class: 'auto-bar' }, autoDesktop, resetDesktop),
+    lightDeck.el);
 
   // ---- 2. CURVES ----
   ctl.curveEditor = new ToneCurveEditor({
@@ -1580,31 +1693,82 @@ function buildAdjustPane() {
   });
   subPanes.get('curves').append(ctl.curveEditor.el);
 
-  // ---- 3. COLOR (WB + Vibrance/Sat + 8-Band HSL + Split Toning) ----
-  const wbGrad = 'linear-gradient(90deg, #4b83e6 0%, #302c28 50%, #f5a623 100%)';
-  const tintGrad = 'linear-gradient(90deg, #45c774 0%, #302c28 50%, #e056b7 100%)';
+  // ---- 3. COLOR (Mobile 3-way sub-switch: Balance / HSL / Split; Desktop: all stacked) ----
+  const wbGrad = 'linear-gradient(90deg, #4b83e6 0%, #28282f 50%, #f5a524 100%)';
+  const tintGrad = 'linear-gradient(90deg, #34d399 0%, #28282f 50%, #ec4899 100%)';
   const rainbowGrad = 'linear-gradient(90deg, #ff4545, #ffa534, #ffe838, #46d96b, #36d9d9, #4686ff, #9b5cff, #f24db8, #ff4545)';
 
-  // 8-Band HSL Color Mixer
+  const colorSubDefs = [
+    { id: 'wb', label: 'Balance' },
+    { id: 'hsl', label: 'HSL' },
+    { id: 'split', label: 'Split Tone' },
+  ];
+  const colorSubBar = h('div', { class: 'color-subbar', role: 'tablist' });
+  const colorSubBtns = new Map();
+  const colorGroups = new Map();
+  const showColorSub = (id) => {
+    S.activeColorSub = id;
+    for (const [k, b] of colorSubBtns) b.setAttribute('aria-selected', String(k === id));
+    for (const [k, g] of colorGroups) g.classList.toggle('is-selected', k === id);
+    syncPanelHeight();
+  };
+  for (const cs of colorSubDefs) {
+    const b = h('button', { class: 'color-subbtn', type: 'button', role: 'tab', text: cs.label });
+    b.addEventListener('click', () => showColorSub(cs.id));
+    colorSubBtns.set(cs.id, b);
+    colorSubBar.append(b);
+  }
+
+  // Group A: Balance & Saturation dial-deck
+  const wbDeck = buildDialDeck({
+    defaultKey: 'warmth',
+    items: [
+      { key: 'warmth', label: 'Temperature', short: 'Temp', min: -1, max: 1, format: signed, gradient: wbGrad },
+      { key: 'tint', label: 'Tint', short: 'Tint', min: -1, max: 1, format: signed, gradient: tintGrad },
+      { key: 'vibrance', label: 'Vibrance', short: 'Vibrance', min: -1, max: 1, format: signed },
+      { key: 'saturation', label: 'Saturation', short: 'Sat', min: -1, max: 1, format: signed },
+    ],
+  });
+  const wbGroup = h('div', { class: 'color-group' }, wbDeck.el);
+  colorGroups.set('wb', wbGroup);
+
+  // Group B: 8-Band HSL Color Mixer
   let activeBand = 'orange';
   const hslDotBtns = new Map();
   const hslBandName = h('span', { class: 'hsl-band-name', text: 'Orange' });
-  const hslResetBtn = h('button', { class: 'curve-reset-btn', type: 'button', text: 'Reset HSL' });
+  const hslResetBtn = h('button', { class: 'curve-reset-btn', type: 'button', text: 'Reset' });
   const hslDots = h('div', { class: 'hsl-dots', role: 'tablist', 'aria-label': 'HSL Colour Band' });
 
   const setHslVal = (idx, v) => {
     if (!state.hsl[activeBand]) state.hsl[activeBand] = [0, 0, 0];
     state.hsl[activeBand][idx] = v;
-    saveState();
-    markLook();
-    syncHslDots();
-    ctl.syncDevBadges?.();
-    requestRender();
+    saveState(); markLook(); syncHslDots(); ctl.syncDevBadges?.(); requestRender();
   };
-
   const hslHue = new Slider({ label: 'Hue', min: -30, max: 30, step: 1, value: 0, defaultValue: 0, bipolar: true, format: degDelta, onInput: (v) => setHslVal(0, v), onChange: () => recordHistory() });
   const hslSat = new Slider({ label: 'Saturation', min: -1, max: 1, step: 0.01, value: 0, defaultValue: 0, bipolar: true, format: signed, onInput: (v) => setHslVal(1, v), onChange: () => recordHistory() });
   const hslLum = new Slider({ label: 'Luminance', min: -0.5, max: 0.5, step: 0.01, value: 0, defaultValue: 0, bipolar: true, format: signed, onInput: (v) => setHslVal(2, v), onChange: () => recordHistory() });
+
+  const hslRows = [
+    h('div', { class: 'ctl is-selected' }, hslHue.el),
+    h('div', { class: 'ctl' }, hslSat.el),
+    h('div', { class: 'ctl' }, hslLum.el),
+  ];
+  const hslPills = [];
+  const hslStrip = h('div', { class: 'param-strip', role: 'tablist' });
+  let activeHslAttr = 0;
+  const selectHslAttr = (idx) => {
+    activeHslAttr = idx;
+    hslRows.forEach((r, i) => r.classList.toggle('is-selected', i === idx));
+    hslPills.forEach((p, i) => p.el.setAttribute('aria-selected', String(i === idx)));
+  };
+  [['Hue', degDelta], ['Saturation', signed], ['Luminance', signed]].forEach(([lbl, fmt], idx) => {
+    const valEl = h('span', { class: 'param-pill-val', text: fmt(0) });
+    const btn = h('button', { class: 'param-pill', type: 'button', role: 'tab', 'aria-selected': String(idx === 0) },
+      h('span', { class: 'param-pill-lbl', text: lbl }), valEl);
+    btn.addEventListener('click', () => selectHslAttr(idx));
+    hslPills.push({ el: btn, valEl, fmt });
+    hslStrip.append(btn);
+  });
 
   const syncHslDots = () => {
     for (const b of HSL_BANDS) {
@@ -1614,18 +1778,20 @@ function buildAdjustPane() {
       btn?.setAttribute('aria-selected', String(b.id === activeBand));
       btn?.classList.toggle('is-mod', mod);
     }
+    const cur = state.hsl?.[activeBand] || [0, 0, 0];
+    hslPills.forEach((p, i) => {
+      const v = cur[i] || 0;
+      p.valEl.textContent = p.fmt(v);
+      p.el.classList.toggle('is-mod', Math.abs(v) > (i === 0 ? 0.1 : 0.005));
+    });
   };
-
   ctl.syncHslSliders = () => {
     const b = HSL_BANDS.find((x) => x.id === activeBand) || HSL_BANDS[0];
     hslBandName.textContent = b.label;
     const v = state.hsl?.[activeBand] || [0, 0, 0];
-    hslHue.set(v[0] || 0);
-    hslSat.set(v[1] || 0);
-    hslLum.set(v[2] || 0);
+    hslHue.set(v[0] || 0); hslSat.set(v[1] || 0); hslLum.set(v[2] || 0);
     syncHslDots();
   };
-
   for (const b of HSL_BANDS) {
     const btn = h('button', { class: 'hsl-dot-btn', type: 'button', role: 'tab', 'aria-label': `${b.label} band`, 'aria-selected': String(b.id === activeBand) },
       h('span', { class: 'hsl-dot', style: { background: b.color } }));
@@ -1634,23 +1800,18 @@ function buildAdjustPane() {
     hslDots.append(btn);
   }
   hslResetBtn.addEventListener('click', () => {
-    state.hsl = defaultHsl();
-    ctl.syncHslSliders();
-    saveState();
-    recordHistory();
-    markLook();
-    ctl.syncDevBadges?.();
-    requestRender();
+    state.hsl = defaultHsl(); ctl.syncHslSliders(); saveState(); recordHistory(); markLook(); ctl.syncDevBadges?.(); requestRender();
   });
 
-  const hslBox = h('div', { class: 'hsl-box' },
-    h('div', { class: 'hsl-head' }, h('span', { class: 'hsl-title', text: 'HSL Mixer' }), hslBandName, hslResetBtn),
-    hslDots,
-    h('div', { class: 'ctl' }, hslHue.el),
-    h('div', { class: 'ctl' }, hslSat.el),
-    h('div', { class: 'ctl' }, hslLum.el));
+  const hslGroup = h('div', { class: 'color-group' },
+    h('div', { class: 'hsl-box dial-deck' },
+      h('div', { class: 'hsl-head' }, h('span', { class: 'hsl-title', text: 'HSL Mixer' }), hslBandName, hslResetBtn),
+      hslDots,
+      ...hslRows,
+      hslStrip));
+  colorGroups.set('hsl', hslGroup);
 
-  // Split Toning Card
+  // Group C: Split Toning
   const shDot = h('i', { class: 'split-chip-dot' });
   const hiDot = h('i', { class: 'split-chip-dot' });
   ctl.syncSplitSwatches = () => {
@@ -1659,31 +1820,39 @@ function buildAdjustPane() {
     shDot.style.background = `rgb(${Math.round(s[0] * 255)},${Math.round(s[1] * 255)},${Math.round(s[2] * 255)})`;
     hiDot.style.background = `rgb(${Math.round(hi[0] * 255)},${Math.round(hi[1] * 255)},${Math.round(hi[2] * 255)})`;
   };
-  const splitBox = h('div', { class: 'split-box' },
-    h('div', { class: 'split-swatch-row' },
-      h('span', { class: 'split-badge' }, shDot, 'Shadows'),
-      h('span', { class: 'split-badge' }, hiDot, 'Highlights')),
-    mkSlider('splitShadowHue', 'Shadow Hue', 0, 360, degInt, { step: 1, bipolar: false, gradient: rainbowGrad, onInputExtra: () => ctl.syncSplitSwatches() }),
-    mkSlider('splitShadowAmt', 'Shadow Tint', 0, 1, pct, { bipolar: false }),
-    mkSlider('splitHighlightHue', 'Highlight Hue', 0, 360, degInt, { step: 1, bipolar: false, gradient: rainbowGrad, onInputExtra: () => ctl.syncSplitSwatches() }),
-    mkSlider('splitHighlightAmt', 'Highlight Tint', 0, 1, pct, { bipolar: false }),
-    mkSlider('splitBalance', 'Balance', -1, 1, signed));
+  const splitDeck = buildDialDeck({
+    defaultKey: 'splitShadowAmt',
+    items: [
+      { key: 'splitShadowHue', label: 'Shadow Hue', short: 'Sh Hue', min: 0, max: 360, step: 1, bipolar: false, format: degInt, gradient: rainbowGrad, onInputExtra: () => ctl.syncSplitSwatches() },
+      { key: 'splitShadowAmt', label: 'Shadow Tint', short: 'Sh Tint', min: 0, max: 1, bipolar: false, format: pct },
+      { key: 'splitHighlightHue', label: 'Highlight Hue', short: 'Hi Hue', min: 0, max: 360, step: 1, bipolar: false, format: degInt, gradient: rainbowGrad, onInputExtra: () => ctl.syncSplitSwatches() },
+      { key: 'splitHighlightAmt', label: 'Highlight Tint', short: 'Hi Tint', min: 0, max: 1, bipolar: false, format: pct },
+      { key: 'splitBalance', label: 'Balance', short: 'Balance', min: -1, max: 1, format: signed },
+    ],
+  });
+  const splitGroup = h('div', { class: 'color-group' },
+    h('div', { class: 'split-box' },
+      h('div', { class: 'split-swatch-row' },
+        h('span', { class: 'split-badge' }, shDot, 'Shadows'),
+        h('span', { class: 'split-badge' }, hiDot, 'Highlights')),
+      splitDeck.el));
+  colorGroups.set('split', splitGroup);
 
-  subPanes.get('color').append(
-    mkSlider('warmth', 'Temperature', -1, 1, signed, { gradient: wbGrad }),
-    mkSlider('tint', 'Tint', -1, 1, signed, { gradient: tintGrad }),
-    mkSlider('vibrance', 'Vibrance', -1, 1, signed),
-    mkSlider('saturation', 'Saturation', -1, 1, signed),
-    hslBox,
-    splitBox);
+  subPanes.get('color').append(colorSubBar, wbGroup, hslGroup, splitGroup);
+  showColorSub('wb');
 
   // ---- 4. DETAIL (Optical DSP) ----
-  subPanes.get('detail').append(
-    mkSlider('clarity', 'Clarity', -0.8, 0.8, signed),
-    mkSlider('sharpen', 'Sharpen', 0, 1, pct, { bipolar: false }),
-    mkSlider('dehaze', 'Dehaze', -1, 1, signed),
-    mkSlider('denoise', 'Denoise (Bilateral)', 0, 1, pct, { bipolar: false }),
-    mkSlider('vignette', 'Vignette', -1, 1, signed));
+  const detailDeck = buildDialDeck({
+    defaultKey: 'clarity',
+    items: [
+      { key: 'clarity', label: 'Clarity', short: 'Clarity', min: -0.8, max: 0.8, format: signed },
+      { key: 'sharpen', label: 'Sharpen', short: 'Sharpen', min: 0, max: 1, bipolar: false, format: pct },
+      { key: 'dehaze', label: 'Dehaze', short: 'Dehaze', min: -1, max: 1, format: signed },
+      { key: 'denoise', label: 'Denoise (Bilateral)', short: 'Denoise', min: 0, max: 1, bipolar: false, format: pct },
+      { key: 'vignette', label: 'Vignette', short: 'Vignette', min: -1, max: 1, format: signed },
+    ],
+  });
+  subPanes.get('detail').append(detailDeck.el);
 
   // ---- 5. CROP & GEOMETRY ----
   const mkGeoBtn = (ico, lbl, onClick) => {
@@ -1691,15 +1860,13 @@ function buildAdjustPane() {
     b.addEventListener('click', onClick);
     return b;
   };
-  const btnRotL = mkGeoBtn('rotateL', 'Rotate L', () => {
+  const btnRotL = mkGeoBtn('rotateL', 'Left', () => {
     state.rotate = (state.rotate + 270) % 360;
-    S.layoutKey = '';
-    saveState(); recordHistory(); ctl.syncGeoButtons(); ctl.syncDevBadges(); requestRender();
+    S.layoutKey = ''; saveState(); recordHistory(); ctl.syncGeoButtons(); ctl.syncDevBadges(); requestRender();
   });
-  const btnRotR = mkGeoBtn('rotateR', 'Rotate R', () => {
+  const btnRotR = mkGeoBtn('rotateR', 'Right', () => {
     state.rotate = (state.rotate + 90) % 360;
-    S.layoutKey = '';
-    saveState(); recordHistory(); ctl.syncGeoButtons(); ctl.syncDevBadges(); requestRender();
+    S.layoutKey = ''; saveState(); recordHistory(); ctl.syncGeoButtons(); ctl.syncDevBadges(); requestRender();
   });
   const btnFlipH = mkGeoBtn('flipH', 'Flip H', () => {
     state.flipH = !state.flipH;
@@ -1709,16 +1876,15 @@ function buildAdjustPane() {
     state.flipV = !state.flipV;
     saveState(); recordHistory(); ctl.syncGeoButtons(); ctl.syncDevBadges(); requestRender();
   });
-
   ctl.syncGeoButtons = () => {
     btnFlipH.setAttribute('aria-pressed', String(!!state.flipH));
     btnFlipV.setAttribute('aria-pressed', String(!!state.flipV));
   };
 
-  const straightenCtl = mkSlider('straighten', 'Straighten', -45, 45, degSigned, {
-    step: 0.1,
-    onInputExtra: () => showStraightenGrid(true),
-    onChangeExtra: () => showStraightenGrid(false),
+  ctl.straighten = new Slider({
+    label: 'Straighten', min: -45, max: 45, step: 0.1, value: state.straighten, defaultValue: 0, bipolar: true, format: degSigned,
+    onInput: (v) => { set('straighten', v); showStraightenGrid(true); },
+    onChange: () => { recordHistory(); showStraightenGrid(false); },
   });
   ctl.straighten.track.addEventListener('pointerdown', () => { if (S.proxy) showStraightenGrid(true); });
   ctl.straighten.track.addEventListener('pointerup', () => showStraightenGrid(false));
@@ -1729,25 +1895,13 @@ function buildAdjustPane() {
     className: 'wrap',
     items: ASPECT_PRESETS.map((a) => ({ id: a.id, label: a.label })),
     value: state.aspect,
-    onChange: (v) => {
-      state.aspect = v;
-      S.layoutKey = '';
-      saveState(); recordHistory(); ctl.syncDevBadges(); requestRender();
-    },
-  });
-
-  const resetGeoBtn = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', html: `${icon('reset')}<span>Reset Geometry</span>` });
-  resetGeoBtn.addEventListener('click', () => {
-    state.rotate = 0; state.flipH = false; state.flipV = false; state.straighten = 0; state.aspect = 'auto';
-    S.layoutKey = '';
-    syncControls(); saveState(); recordHistory(); requestRender();
+    onChange: (v) => { state.aspect = v; S.layoutKey = ''; saveState(); recordHistory(); ctl.syncDevBadges(); requestRender(); },
   });
 
   subPanes.get('crop').append(
     h('div', { class: 'geo-bar' }, btnRotL, btnRotR, btnFlipH, btnFlipV),
-    straightenCtl,
-    h('div', { class: 'cam-opts' }, h('div', { class: 'opts-label', text: 'Aspect Ratio' }), ctl.aspectChips.el),
-    h('div', { class: 'pane-foot' }, resetGeoBtn));
+    h('div', { class: 'ctl' }, ctl.straighten.el),
+    h('div', { class: 'cam-opts' }, h('div', { class: 'opts-label', text: 'Ratio' }), ctl.aspectChips.el));
 
   // Sub-tab edit indicator pips
   ctl.syncDevBadges = () => {
@@ -1772,34 +1926,36 @@ function buildAdjustPane() {
 
 function buildEffectsPane() {
   const pane = document.querySelector('[data-pane="effects"]');
-  const mk = (key, label, max, extra) => {
-    const s = new Slider({
-      label, min: 0, max, step: 0.01, value: state[key], defaultValue: defaults()[key], format: pct,
-      onInput: (v) => set(key, v),
-      onChange: () => recordHistory(),
-    });
-    ctl[key] = s;
-    if (extra) s.head.append(extra);
-    return h('div', { class: 'ctl' }, s.el);
-  };
   const shuffle = (seedKey, label) => {
     const b = h('button', { class: 'icon-btn', type: 'button', 'aria-label': label, html: icon('shuffle') });
     b.addEventListener('click', () => {
       state[seedKey] = ((Math.random() * 1e9) | 0) + 1;
       if (seedKey === 'leakSeed' && state.leak === 0) { set('leak', 0.6); ctl.leak.set(0.6); }
       if (seedKey === 'dustSeed' && state.dust === 0) { set('dust', 0.5); ctl.dust.set(0.5); }
-      saveState();
-      recordHistory();
-      markLook();
+      saveState(); recordHistory(); markLook();
       if (seedKey === 'dustSeed') rebuildDust();
       requestRender();
     });
     return b;
   };
 
+  ctl.leakStyle = new ChipGroup({
+    label: 'Light leak style', className: 'wrap',
+    items: [
+      { id: 'warm', label: 'Warm', swatch: 'linear-gradient(135deg, #ffb347, #ff5a1f)' },
+      { id: 'prism', label: 'Prism', swatch: 'linear-gradient(135deg, #ff8f7a, #7ff0c8)' },
+    ],
+    value: state.leakStyle === 'prism' ? 'prism' : 'warm',
+    onChange: (v) => {
+      state.leakStyle = v;
+      if (state.leak === 0) { state.leak = 0.6; ctl.leak.set(0.6); }
+      saveState(); recordHistory(); markLook(); requestRender();
+    },
+  });
+
   ctl.dateToggle = new Toggle({
     label: 'Date stamp', value: state.dateOn,
-    onChange: (v) => { state.dateOn = v; saveState(); recordHistory(); syncDateOpts(); rebuildDate(); },
+    onChange: (v) => { state.dateOn = v; saveState(); recordHistory(); syncDateOpts(); ctl.syncDatePill?.(); rebuildDate(); },
   });
   ctl.dateFormat = new ChipGroup({
     label: 'Date format', className: 'wrap',
@@ -1826,32 +1982,34 @@ function buildEffectsPane() {
     state.date = ctl.dateInput.value; saveState(); recordHistory(); rebuildDate();
   });
   ctl.dateOpts = h('div', { class: 'date-opts' }, ctl.dateFormat.el, ctl.dateColor.el, ctl.dateInput);
+  const dateSection = h('div', { class: 'ctl date-section' }, ctl.dateToggle.el, ctl.dateOpts);
 
-  ctl.leakStyle = new ChipGroup({
-    label: 'Light leak style', className: 'wrap',
+  let datePillEl = null, datePillVal = null;
+  ctl.syncDatePill = () => {
+    if (datePillVal) datePillVal.textContent = state.dateOn ? 'ON' : 'OFF';
+    if (datePillEl) datePillEl.classList.toggle('is-mod', !!state.dateOn);
+  };
+
+  const fxDeck = buildDialDeck({
+    defaultKey: 'grain',
+    onSelect: (k) => { ctl.activeEffectKey = k; syncPanelHeight(); },
     items: [
-      { id: 'warm', label: 'Warm', swatch: 'linear-gradient(135deg, #ffb347, #ff5a1f)' },
-      { id: 'prism', label: 'Prism', swatch: 'linear-gradient(135deg, #ff8f7a, #7ff0c8)' },
+      { key: 'grain', label: 'Film Grain', short: 'Grain', min: 0, max: 2, bipolar: false, format: pct },
+      { key: 'halation', label: 'Halation', short: 'Halation', min: 0, max: 2, bipolar: false, format: pct },
+      { key: 'flare', label: 'Lens Flare', short: 'Flare', min: 0, max: 2, bipolar: false, format: pct },
+      { key: 'leak', label: 'Light Leak', short: 'Leak', min: 0, max: 1, bipolar: false, format: pct, headExtra: shuffle('leakSeed', 'Shuffle light leak'), subRow: h('div', { style: { paddingBottom: '4px' } }, ctl.leakStyle.el) },
+      { key: 'dust', label: 'Dust & Scratches', short: 'Dust', min: 0, max: 1, bipolar: false, format: pct, headExtra: shuffle('dustSeed', 'Shuffle dust') },
+      {
+        key: 'date', label: 'Date Stamp', short: 'Date', customEl: dateSection,
+        pillVal: () => (state.dateOn ? 'ON' : 'OFF'),
+        onPillMount: (p, v) => { datePillEl = p; datePillVal = v; },
+      },
     ],
-    value: state.leakStyle === 'prism' ? 'prism' : 'warm',
-    onChange: (v) => {
-      state.leakStyle = v;
-      if (state.leak === 0) { state.leak = 0.6; ctl.leak.set(0.6); }
-      saveState(); recordHistory(); markLook(); requestRender();
-    },
   });
 
-  pane.append(
-    mk('grain', 'Film Grain', 2),
-    mk('halation', 'Halation', 2),
-    mk('flare', 'Lens Flare', 2),
-    h('div', { class: 'divider' }),
-    mk('leak', 'Light Leak', 1, shuffle('leakSeed', 'Shuffle light leak')),
-    h('div', { class: 'ctl leak-style' }, ctl.leakStyle.el),
-    mk('dust', 'Dust & Scratches', 1, shuffle('dustSeed', 'Shuffle dust')),
-    h('div', { class: 'divider' }),
-    h('div', { class: 'ctl' }, ctl.dateToggle.el, ctl.dateOpts));
+  pane.append(h('div', { class: 'pane-label', text: 'Darkroom Effects' }), fxDeck.el);
   syncDateOpts();
+  ctl.syncDatePill();
 }
 
 function syncDateOpts() {
@@ -1863,6 +2021,7 @@ function set(key, v) {
   state[key] = v;
   saveState();
   if (key === 'dust') rebuildDust();
+  updateParamPill(key);
   ctl.syncDevBadges?.();
   markLook();
   requestRender();
@@ -1885,7 +2044,28 @@ function resetAll() {
   recordHistory();
   rebuildDust();
   requestRender();
-  toast('Develop & effects reset — film & camera kept');
+  toast('All edits reset — film & camera kept');
+}
+
+/* ----------------------------------------------------- mobile tools sheet */
+
+function openMoreToolsSheet() {
+  if (!S.proxy) return;
+  let sheet = null;
+  const item = (ico, label, meta, onClick, cls = '') => {
+    const b = h('button', { class: `menu-item ${cls}`, type: 'button', html: `${icon(ico)}<span>${label}</span>${meta ? `<span class="menu-item-meta">${meta}</span>` : ''}` });
+    b.addEventListener('click', () => { sheet.close(); onClick(); });
+    return b;
+  };
+  const body = h('div', { class: 'menu-list' },
+    item('wand', 'Auto Develop', 'Tone & WB', runAutoDevelop),
+    item('histogram', 'Live Scopes (RGB / Parade)', S.scopeOn ? 'ON' : 'OFF', toggleScopes, S.scopeOn ? 'is-on' : ''),
+    item('clipping', 'Highlight & Shadow Clipping', S.clipWarn ? 'ON' : 'OFF', toggleClipping, S.clipWarn ? 'is-on' : ''),
+    item('bookmark', 'Save Current Edit as Look', 'Recipe', openSaveRecipeSheet),
+    item('info', `About ${film().name}`, `ISO ${film().iso || '—'}`, openFilmInfo),
+    item('reset', 'Reset All Edits', '', resetAll, 'is-danger'));
+  sheet = new Sheet({ title: 'Studio Tools', content: body });
+  sheet.open();
 }
 
 /* ------------------------------------------------------------- info sheets */
@@ -1953,24 +2133,19 @@ function initTabs() {
   }
   const tabs = [...document.querySelectorAll('.tab')];
   const show = (name) => {
+    S.activeTab = name;
     for (const t of tabs) t.setAttribute('aria-selected', String(t.dataset.tab === name));
     for (const p of document.querySelectorAll('.pane')) p.hidden = p.dataset.pane !== name;
     saveUi({ tab: name });
-    if (name === 'adjust' && ctl.curveEditor) ctl.curveEditor.paint();
+    syncPanelHeight();
+    if (name === 'adjust' && S.activeDevSub === 'curves' && ctl.curveEditor) {
+      refreshScopes.flush();
+      ctl.curveEditor.paint();
+    }
   };
   for (const t of tabs) t.addEventListener('click', () => show(t.dataset.tab));
   const saved = loadUi().tab;
   show(tabs.some((t) => t.dataset.tab === saved) ? saved : (M.looks ? 'looks' : 'film'));
-
-  // Mobile expandable inspector drawer toggle
-  const panel = $('panel');
-  const expBtn = $('btn-panel-expand');
-  expBtn?.addEventListener('click', () => {
-    const on = !panel.classList.contains('is-expanded');
-    panel.classList.toggle('is-expanded', on);
-    expBtn.setAttribute('aria-expanded', String(on));
-    setTimeout(fitCanvas, 280);
-  });
 }
 
 /* ------------------------------------------------------- stage gestures & zoom */
@@ -2060,12 +2235,10 @@ function initStageGestures() {
   stage.addEventListener('pointercancel', end);
   stage.addEventListener('lostpointercapture', end);
 
-  // Wheel zoom on desktop
   stage.addEventListener('wheel', (e) => {
     if (!S.proxy || e.target.closest('.stage-hud')) return;
     e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    setZoom(S.zoom * factor);
+    setZoom(S.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
   }, { passive: false });
 
   $('split-handle').append(h('span', { class: 'split-tag l', text: 'BEFORE' }), h('span', { class: 'split-tag r', text: 'AFTER' }));
@@ -2103,7 +2276,7 @@ function toggleClipping() {
   S.clipWarn = !S.clipWarn;
   $('btn-clip')?.setAttribute('aria-pressed', String(S.clipWarn));
   requestRender();
-  toast(S.clipWarn ? 'Clipping warnings ON (Red = blown, Blue = crushed)' : 'Clipping warnings OFF', { duration: 2000 });
+  toast(S.clipWarn ? 'Clipping ON (Red = blown, Blue = crushed)' : 'Clipping OFF', { duration: 1800 });
 }
 
 /* ------------------------------------------------------------------ export */
@@ -2185,7 +2358,6 @@ function openExportSheet() {
 }
 
 async function renderCanvasExport({ fmt, quality, maxEdge, onProgress }) {
-  // For PNG / WebP, render strips into a single output canvas (capped safely to GPU/4096 limit)
   const cap = maxEdge > 0 ? maxEdge : Math.min(4096, S.renderer.limits?.maxTexture || 4096);
   const blobJpg = await M.exporter.exportJpeg({
     renderer: S.renderer,
@@ -2210,7 +2382,7 @@ async function renderCanvasExport({ fmt, quality, maxEdge, onProgress }) {
 
 async function startExport(opts = {}) {
   if (!S.proxy || S.exporting) return;
-  if (!M.exporter) { toast('Export isn’t available yet (exporter module missing).', { tone: 'error' }); return; }
+  if (!M.exporter) { toast('Export isn’t available yet.', { tone: 'error' }); return; }
 
   const fmt = opts.fmt || 'jpeg';
   const quality = opts.quality ?? 92;
@@ -2271,7 +2443,6 @@ async function startExport(opts = {}) {
       if (sheet.isOpen) sheet.close();
       toast('Export cancelled');
     } else {
-      console.error('[C41] export failed', e);
       if (sheet.isOpen) sheet.close();
       toast(`Export failed${e?.message ? ': ' + e.message : ''}`, { tone: 'error', duration: 6000 });
     }
@@ -2303,7 +2474,7 @@ async function startExport(opts = {}) {
         () => toast('Saved ✓'),
         (err) => {
           if (err && err.name === 'AbortError') return;
-          toast('Sharing failed — press and hold the image to save instead.', { duration: 5000 });
+          toast('Sharing failed — press and hold the image to save.', { duration: 5000 });
         });
     });
     actions.append(share);
@@ -2312,9 +2483,7 @@ async function startExport(opts = {}) {
   actions.append(dlBtn);
 
   const done = h('div', { class: 'export-done' },
-    preview,
-    meta,
-    actions,
+    preview, meta, actions,
     h('p', { class: 'export-hint', text: 'Or press and hold the image to save it.' }));
   sheet.setTitle(f.name);
   sheet.body.replaceChildren(done);
@@ -2408,15 +2577,17 @@ async function boot() {
   $('btn-auto').innerHTML = icon('wand');
   $('btn-scope').innerHTML = icon('histogram');
   $('btn-clip').innerHTML = icon('clipping');
+  $('btn-more').innerHTML = icon('more');
 
-  const lib = $('file-library'), cam = $('file-camera');
+  const lib = $('file-library'), cam = $('file-camera'), ref = $('file-ref');
   const pick = (input) => { input.value = ''; input.click(); };
   $('btn-import').addEventListener('click', () => pick(lib));
   $('btn-choose').addEventListener('click', () => pick(lib));
   $('btn-take').addEventListener('click', () => pick(cam));
   $('btn-sample')?.addEventListener('click', loadSamplePhoto);
+  $('btn-empty-match')?.addEventListener('click', () => pick(ref));
+  $('brand-home')?.addEventListener('click', (e) => { e.preventDefault(); if (S.proxy) openFilmInfo(); });
   for (const input of [lib, cam]) input.addEventListener('change', () => importFile(input.files && input.files[0]));
-  const ref = $('file-ref');
   ref.addEventListener('change', () => { const f = ref.files && ref.files[0]; ref.value = ''; startMatch(f); });
 
   $('btn-undo').addEventListener('click', doUndo);
@@ -2424,6 +2595,7 @@ async function boot() {
   $('btn-auto').addEventListener('click', runAutoDevelop);
   $('btn-scope').addEventListener('click', toggleScopes);
   $('btn-clip').addEventListener('click', toggleClipping);
+  $('btn-more').addEventListener('click', openMoreToolsSheet);
   $('btn-save').addEventListener('click', openExportSheet);
   $('title-pill')?.addEventListener('click', openFilmInfo);
 
@@ -2433,7 +2605,6 @@ async function boot() {
   const critical = ['film-transform.js', 'films.js', 'cameras.js', 'renderer.js'].filter((m) => missing.includes(m));
   if (critical.length) {
     fatal('C41 is still being developed', `Missing module${critical.length > 1 ? 's' : ''}: ${critical.join(', ')}. Reload in a moment.`);
-    for (const b of ['btn-import', 'btn-save', 'btn-compare']) $(b).disabled = true;
     return;
   }
 
@@ -2447,21 +2618,18 @@ async function boot() {
   try {
     S.renderer = new M.renderer.Renderer(view);
   } catch (e) {
-    console.error('[C41] renderer init failed', e);
     const noGl = String(e?.message || e).includes('webgl2');
     fatal(noGl ? 'WebGL 2 not available' : 'Can’t start the editor',
-      noGl
-        ? 'C41 develops photos on your GPU using WebGL 2. Please update to iOS 15 or later (or a current browser) and try again.'
-        : `The image engine failed to start (${e?.message || e}).`);
-    for (const b of ['btn-import', 'btn-save', 'btn-compare']) $(b).disabled = true;
+      noGl ? 'C41 requires WebGL 2. Please update your browser and try again.' : `The image engine failed to start (${e?.message || e}).`);
     return;
   }
   S.renderer.onContextRestored?.(() => { resendAll(); });
   view.addEventListener('webglcontextlost', () => toast('Graphics reset — restoring…'));
 
-  // Live Scope HUD
+  // Default live scope: ON on desktop (>= 900px), OFF on mobile so photo stays pure & unobstructed
   const ui = loadUi();
-  S.scopeOn = ui.scopeOn !== false;
+  const isWide = window.innerWidth >= 900;
+  S.scopeOn = ui.scopeOn !== undefined ? !!ui.scopeOn : isWide;
   $('btn-scope').setAttribute('aria-pressed', String(S.scopeOn));
   S.scope = new ScopeView({
     mode: ui.scopeMode || 'rgb',
@@ -2487,20 +2655,15 @@ async function boot() {
   window.addEventListener('pagehide', () => saveState.flush());
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveState.flush(); });
 
-  // Drag & drop with active visual dropzone state
   let dragDepth = 0;
   stage.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; stage.classList.add('is-dragover'); });
   stage.addEventListener('dragover', (e) => { e.preventDefault(); });
   stage.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) stage.classList.remove('is-dragover'); });
   stage.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dragDepth = 0;
-    stage.classList.remove('is-dragover');
+    e.preventDefault(); dragDepth = 0; stage.classList.remove('is-dragover');
     const f = e.dataTransfer?.files?.[0];
     if (f) importFile(f);
   });
-
-  if (missing.includes('exporter.js')) toast('Export module missing — saving disabled.', { tone: 'error' });
 
   const setState = (patch) => {
     Object.assign(state, patch);
