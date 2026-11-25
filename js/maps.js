@@ -74,18 +74,19 @@ export function buildMaps(proxyCanvas) {
 
   const N = w * h;
   const R = new Float32Array(N), G = new Float32Array(N), B = new Float32Array(N);
-  const mask = new Float32Array(N), soft = new Float32Array(N);
+  const mask = new Float32Array(N), sa = new Float32Array(N);
   for (let i = 0; i < N; i++) {
     const r = s2l[px[i * 4]], gg = s2l[px[i * 4 + 1]], b = s2l[px[i * 4 + 2]];
     const l = 0.2126 * r + 0.7152 * gg + 0.0722 * b;
     mask[i] = smooth(0.6, 1.0, l);
+    sa[i] = smooth(0.32, 0.95, l) * l;
     const sm = smooth(0.45, 1.0, l);
-    soft[i] = sm;
     R[i] = r * sm; G[i] = gg * sm; B[i] = b * sm;
   }
   const short = Math.min(w, h);
   const hR = gaussBlur(mask, w, h, short * 0.008);
   const hG = gaussBlur(mask, w, h, short * 0.02);
+  const hB = gaussBlur(sa, w, h, short * 0.0055);
   const bs = short * 0.025;
   const bR = gaussBlur(R, w, h, bs), bG = gaussBlur(G, w, h, bs), bB = gaussBlur(B, w, h, bs);
 
@@ -95,7 +96,7 @@ export function buildMaps(proxyCanvas) {
   const q = (v) => Math.max(0, Math.min(255, Math.round(v * 255)));
   for (let i = 0; i < N; i++) {
     const o = i * 4;
-    hd[o] = q(hR[i]); hd[o + 1] = q(hG[i]); hd[o + 2] = 0; hd[o + 3] = 255;
+    hd[o] = q(hR[i]); hd[o + 1] = q(hG[i]); hd[o + 2] = q(hB[i]); hd[o + 3] = 255;
     bd[o] = q(bR[i]); bd[o + 1] = q(bG[i]); bd[o + 2] = q(bB[i]); bd[o + 3] = 255;
   }
   hmap.getContext('2d').putImageData(hImg, 0, 0);

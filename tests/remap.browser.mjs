@@ -35,6 +35,10 @@ const check = (ok, msg) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (
 
 const CASES = [
   { id: 'leica-m6' },
+  { id: 'contax-g2' },
+  { id: 'nikon-fm2' },
+  { id: 'lomo-lca' },
+  { id: 'lomo-petzval-85' },
   { id: 'holga-120n', border: true },
   { id: 'lomo-diana-f-plus', flash: true, gel: 'magenta' },
   { id: 'lomo-lc-a-120', border: true },

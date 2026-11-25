@@ -2755,7 +2755,7 @@ function camTick(now) {
 
   // Lightweight 5Hz micro-highlight map for real-time halation & bloom in viewfinder
   const fp = film().params || {};
-  const needsGlow = ((fp.halation?.amount || 0) * state.halation > 0.01) || ((fp.bloom || 0) > 0.01) || ((c.params?.bloom || 0) > 0.01);
+  const needsGlow = ((fp.halation?.amount || 0) * state.halation > 0.01) || ((fp.bloom || 0) > 0.01) || ((c.params?.bloom || 0) > 0.01) || ((c.params?.spherical || 0) > 0.01);
   if (needsGlow && M.maps && now - CAM.mapTimer > 200) {
     CAM.mapTimer = now;
     if (!CAM.tinyCanvas) CAM.tinyCanvas = mkCanvas(64, 48);

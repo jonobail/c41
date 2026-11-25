@@ -39,11 +39,12 @@ uniform float uGeoOn;
 uniform vec4 uGeoMat;      // [m0, m1, m2, m3] logical -> raw
 uniform vec2 uGeoOff;      // [ox, oy] logical -> raw
 
-uniform float uSharp, uSoft, uClarity, uCornerSoft, uSweet, uBlurShape, uMaxR, uDist, uCA, uMaxCA;
+uniform float uSharp, uSoft, uClarity, uCornerSoft, uSweet, uBlurShape, uMaxR, uDist, uDistK2, uCA, uMaxCA;
+uniform float uLoCA, uComa, uSpherical, uMicroContrast;
 uniform float uVig, uVigHard, uVigWob, uVigSat;
 uniform vec2 uVigOff;
-uniform vec3 uWB;
-uniform float uExpo, uVeil, uSat, uFlash;
+uniform vec3 uWB, uVeilCol, uFlareCol;
+uniform float uExpo, uVeil, uSat, uFlash, uFlareTint;
 uniform vec3 uHalCol;
 uniform float uHal, uBloom;
 uniform vec3 uFlare;       // x, y (frame-normalised), strength (final)
@@ -229,20 +230,29 @@ vec3 develop(vec2 p) {
   float d = length(rp);
   float edge = smoothstep(uSweet, 1.0, d);  // 0 in the sweet spot .. 1 in the corners
 
-  // ---- lens geometry: barrel / pincushion, corners fixed ----
+  // ---- lens geometry: 2nd + 4th-order radial distortion, corners fixed ----
   vec2 q = p;
-  if (uDist != 0.0) q = ctr + (p - ctr) * (1.0 + uDist * d * d) / (1.0 + uDist);
+  if (uDist != 0.0 || uDistK2 != 0.0) {
+    float d2 = d * d;
+    float denom = max(0.25, 1.0 + uDist + uDistK2);
+    q = ctr + (p - ctr) * (1.0 + uDist * d2 + uDistK2 * d2 * d2) / denom;
+  }
 
-  // ---- lateral CA ----
+  // ---- lateral CA (with nonlinear rim boost on circular fisheyes) ----
   vec2 off = vec2(0.0);
   if (uCA > 0.0) {
-    off = (q - ctr) * uCA * 0.0025;
+    float caScale = uCA * 0.0025;
+    if (uMode == 2) {
+      float r2 = gRho * gRho;
+      caScale *= 1.0 + 2.0 * r2 * r2;
+    }
+    off = (q - ctr) * caScale;
     float lo = length(off);
     if (lo > uMaxCA * gK) off *= uMaxCA * gK / lo;
   }
   vec3 col = uCA > 0.0 ? tapCA(q, off) : srcAt(q);
 
-  // ---- softness: overall + field curvature toward the corners (elliptical kernel) ----
+  // ---- softness: overall + field curvature toward the corners (elliptical / Petzval swirl kernel) ----
   float soft = uSoft + uCornerSoft * edge;
   float rad = min(soft * refShort * 0.005, uMaxR * gK);
   if (rad > 0.4) {
@@ -252,6 +262,7 @@ vec3 develop(vec2 p) {
     float ra = rad * (1.0 + max(an, 0.0) * 1.5) * (1.0 - max(-an, 0.0) * 0.6);
     float rt = rad * (1.0 + max(-an, 0.0) * 1.5) * (1.0 - max(an, 0.0) * 0.6);
     vec3 acc = col;
+    float wSum = 1.0;
     for (int i = 0; i < 16; i++) {
       float fi = float(i) + 0.5;
       float rr = sqrt(fi / 16.0);
@@ -267,9 +278,35 @@ vec3 develop(vec2 p) {
         vec2 cs = vec2(cos(ph), sin(ph));
         o2 = mix(o2, (vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x) * sc) - v, min(1.0, uSwirl));
       }
-      acc += uCA > 0.0 ? tapCA(q + o2, off) : srcAt(q + o2);
+      vec3 tap = uCA > 0.0 ? tapCA(q + o2, off) : srcAt(q + o2);
+      float tw = 1.0;
+      if (uSwirl > 0.0) {
+        // Highlight-weighted Petzval bokeh arcs: bright speculars streak into glowing cat's-eyes
+        float tl = dot(tap, LUMA);
+        tw = 1.0 + 3.0 * uSwirl * edge * smoothstep(0.55, 0.98, tl);
+      }
+      acc += tap * tw;
+      wSum += tw;
     }
-    col = mix(col, acc / 17.0, smoothstep(0.4, 1.5, rad));
+    col = mix(col, acc / wSum, smoothstep(0.4, 1.5, rad));
+  }
+
+  // ---- longitudinal / axial CA (wide-open purple-magenta & green-cyan high-contrast fringing) ----
+  if (uLoCA > 0.0) {
+    float rL = max(1.0, refShort * 0.0015);
+    float lc = dot(col, LUMA);
+    float l0 = dot(srcAt(q + vec2( rL, 0.0)), LUMA);
+    float l1 = dot(srcAt(q + vec2(-rL, 0.0)), LUMA);
+    float l2 = dot(srcAt(q + vec2( 0.0,  rL)), LUMA);
+    float l3 = dot(srcAt(q + vec2( 0.0, -rL)), LUMA);
+    float lMax = max(max(l0, l1), max(l2, l3));
+    float lMin = min(min(l0, l1), min(l2, l3));
+    float hiBleed = max(0.0, lMax - lc) * smoothstep(0.55, 0.95, lMax) * smoothstep(0.95, 0.30, lc);
+    float loBleed = max(0.0, lc - lMin) * smoothstep(0.25, 0.70, lc) * smoothstep(0.45, 0.05, lMin);
+    float lw = uLoCA * (0.65 + 0.35 * d);
+    col += vec3(0.52, -0.32, 0.72) * (hiBleed * lw * 0.85)
+         + vec3(-0.14, 0.24, 0.06) * (loBleed * lw * 0.35);
+    col = clamp(col, 0.0, 1.0);
   }
 
   // ---- edge-preserving bilateral denoise ----
@@ -292,22 +329,38 @@ vec3 develop(vec2 p) {
     col = mix(col, bAcc / wSum, clamp(uDenoise * 1.15, 0.0, 1.0));
   }
 
-  // ---- micro-contrast (unsharp mask) + clarity + dehaze — sharp fades where corners go soft ----
+  // ---- optical micro-contrast (3D pop) + unsharp mask + clarity + dehaze ----
   float sh = uSharp * (1.0 - edge * min(1.0, uCornerSoft * 2.0));
-  if (sh > 0.0 || uClarity != 0.0 || uDehaze != 0.0) {
+  if (sh > 0.0 || uMicroContrast != 0.0 || uClarity != 0.0 || uDehaze != 0.0) {
     float r1 = max(0.75, refShort * 0.0008);
+    float rMc = max(1.0, refShort * 0.0024);
     float r2 = refShort * 0.006;
     float r3 = refShort * 0.014;
-    vec3 m1 = vec3(0.0), m2 = vec3(0.0), m3 = vec3(0.0);
+    vec3 m1 = vec3(0.0), mMc = vec3(0.0), m2 = vec3(0.0), m3 = vec3(0.0);
     for (int i = 0; i < 8; i++) {
       float a = float(i) * 0.7853982;
       vec2 dir = vec2(cos(a), sin(a));
       vec2 dir2 = vec2(cos(a + 0.3926991), sin(a + 0.3926991));
       if (sh > 0.0) m1 += srcAt(q + dir * r1);
+      if (uMicroContrast != 0.0) mMc += srcAt(q + dir2 * rMc);
       if (uClarity != 0.0) m2 += srcAt(q + dir2 * r2) + srcAt(q + dir * r2 * 0.5);
       if (uDehaze != 0.0) m3 += srcAt(q + dir * r3);
     }
     if (sh > 0.0) col += (col - m1 / 8.0) * sh * 1.6;
+    if (uMicroContrast != 0.0) {
+      float L0 = dot(col, LUMA);
+      float Lm = dot(mMc * 0.125, LUMA);
+      float dL = L0 - Lm;
+      // Soft-clamped, noise-cored optical MTF: boosts mid-frequency tonal texture without
+      // amplifying smooth-sky sensor noise or producing white/black edge halos
+      float adL = abs(dL);
+      float core = smoothstep(0.008, 0.032, adL);
+      float dSoft = (dL * core) / (1.0 + adL * 4.5);
+      float mw = 0.25 + 0.75 * clamp(4.0 * L0 * (1.0 - L0), 0.0, 1.0);
+      float newL = clamp(L0 + dSoft * uMicroContrast * 0.90 * mw, 0.0, 1.0);
+      if (L0 > 1e-4) col *= newL / L0;
+      else col = vec3(newL);
+    }
     if (uClarity != 0.0) {
       m2 /= 16.0;
       // local contrast mostly in the midtones; negative = haze / glow toward the local mean
@@ -338,6 +391,32 @@ vec3 develop(vec2 p) {
   // ---- linear light ----
   vec3 lin = toLin(col) * uWB * uExpo;
   if (uMode == 1) lin *= exp2(gCellExpo) * gCellWb;
+
+  // ---- outer-field highlight sagittal coma (linear light: bright highlights sprout outward wings) ----
+  if (uComa > 0.0 && edge > 0.01) {
+    vec2 rd = d > 1e-4 ? rp / d : vec2(1.0, 0.0);
+    vec2 td = vec2(-rd.y, rd.x);
+    float cRad = min(uComa * edge * refShort * 0.0065, uMaxR * gK);
+    if (cRad > 0.5) {
+      vec2 offs[6] = vec2[6](
+        rd * (-0.45 * cRad) + td * ( 0.28 * cRad),
+        rd * (-0.45 * cRad) + td * (-0.28 * cRad),
+        rd * (-0.85 * cRad) + td * ( 0.42 * cRad),
+        rd * (-0.85 * cRad) + td * (-0.42 * cRad),
+        rd * (-1.35 * cRad) + td * ( 0.22 * cRad),
+        rd * (-1.35 * cRad) + td * (-0.22 * cRad)
+      );
+      float wts[6] = float[6](0.24, 0.24, 0.16, 0.16, 0.10, 0.10);
+      vec3 wing = vec3(0.0);
+      for (int i = 0; i < 6; i++) {
+        vec3 sl = toLin(srcAt(q + offs[i])) * uWB * uExpo;
+        if (uMode == 1) sl *= exp2(gCellExpo) * gCellWb;
+        float hw = smoothstep(0.45, 0.95, dot(sl, LUMA) / max(uExpo, 1e-3));
+        wing += max(sl - lin, vec3(0.0)) * (hw * wts[i]);
+      }
+      lin += wing * (uComa * edge * 0.9);
+    }
+  }
 
   // vignette (stops), optionally off-centre and uneven
   vec2 vq = rp - uVigOff;
@@ -387,17 +466,31 @@ vec3 develop(vec2 p) {
   // multi-lens grid: soft dark separators between the cells
   if (gGap > 0.0) lin = mix(lin, lin * uGap.z * 0.25, gGap);
 
-  // veiling glare (washed blacks)
-  lin += uVeil * 0.25 * uExpo;
+  // multi-coated anti-reflective shadow-floor depth (Zeiss T* / Leica deep clean blacks)
+  if (uMicroContrast > 0.0) {
+    float Ln = dot(lin, LUMA) / max(uExpo, 1e-3);
+    lin *= max(0.55, 1.0 - uMicroContrast * 0.22 * exp(-Ln / 0.06));
+  }
 
-  // halation + bloom (maps cover the whole image)
+  // coloured veiling glare (uncoated / single-coated washed blacks)
+  if (uVeil > 0.0) lin += uVeilCol * (uVeil * 0.25 * uExpo);
+
+  // halation + bloom + tight spherical-aberration optical glow (maps cover the whole image)
   vec2 nImg = clamp(geoToRaw(lensToImg(q)), vec2(0.0), uImg) / uImg;
   vec4 h = texture(uHmap, nImg);
+  vec3 bm = texture(uBmap, nImg).rgb;
   // halation is light scattered back from the film base: it shows as a glow AROUND highlights,
   // so suppress it inside the (already saturated) highlight itself
   float hiSelf = smoothstep(0.5, 1.0, dot(lin, LUMA));
   lin += uHalCol * (0.6 * h.r + 0.4 * h.g) * uHal * 2.0 * uExpo * (1.0 - 0.85 * hiSelf);
-  lin += texture(uBmap, nImg).rgb * uBloom * 1.5 * uExpo;
+  lin += bm * uBloom * 1.5 * uExpo;
+  if (uSpherical > 0.0) {
+    float bmL = dot(bm, LUMA);
+    vec3 saTint = bmL > 1e-3 ? mix(vec3(1.0), clamp(bm / bmL, 0.55, 1.65), 0.72) : vec3(1.0);
+    float core = smoothstep(0.75, 1.4, dot(lin, LUMA) / max(uExpo, 1e-3));
+    vec3 saHalo = saTint * (0.78 * h.b + 0.22 * bmL) * uSpherical * 0.95 * uExpo;
+    lin += saHalo * (1.0 - 0.45 * core);
+  }
 
   // fisheye: grey internal-reflection ring just inside the rim; outside the image circle only a
   // faint reflection of the rim on the lens barrel, then black film base
@@ -410,24 +503,29 @@ vec3 develop(vec2 p) {
     }
   }
 
-  // flare
+  // coating-specific flare (multi-coated ghost tints vs uncoated milky wash)
   if (uFlare.z > 0.0) {
     vec2 fq0 = (p - ctr) / refShort;
     vec2 fq = (uFlare.xy * gFull - ctr) / refShort;
     float fd = length(fq0 - fq);
-    vec3 fl = vec3(1.0, 0.78, 0.55) * (exp(-fd * fd / (0.08 * 0.08)) * 1.4 + exp(-fd * fd / (0.35 * 0.35)) * 0.12);
+    float uncoat = clamp(uVeil * 18.0, 0.0, 0.85);
+    vec3 fl = uFlareCol * (
+      exp(-fd * fd / (0.08 * 0.08)) * (1.4 - 0.35 * uncoat)
+      + exp(-fd * fd / (0.35 * 0.35)) * (0.12 + 0.22 * uncoat)
+    );
     // ghosts along the line through the centre
     vec3 ghosts = vec3(0.0);
     float ks[4] = float[4](-0.35, -0.75, -1.25, 0.45);
     float rs[4] = float[4](0.05, 0.085, 0.035, 0.06);
     vec3 ts[4] = vec3[4](vec3(0.35, 0.9, 0.45), vec3(0.85, 0.4, 0.9), vec3(1.0, 0.7, 0.3), vec3(0.4, 0.6, 1.0));
+    vec3 gBias = mix(vec3(1.0), uFlareCol / max(dot(uFlareCol, LUMA), 0.2), abs(uFlareTint) * 0.65);
     for (int i = 0; i < 4; i++) {
       float gd = length(fq0 - fq * ks[i]);
       float disc = 1.0 - smoothstep(rs[i] * 0.6, rs[i], gd);
       float rim = smoothstep(rs[i] * 0.55, rs[i] * 0.9, gd) * disc;
-      ghosts += ts[i] * (disc * 0.10 + rim * 0.08);
+      ghosts += (ts[i] * gBias) * (disc * 0.10 + rim * 0.08);
     }
-    fl += ghosts + vec3(1.0, 0.9, 0.8) * 0.03;
+    fl += ghosts * (1.0 - 0.65 * uncoat) + mix(vec3(1.0, 0.9, 0.8), uFlareCol, 0.5) * (0.03 + 0.05 * uncoat);
     lin += fl * uFlare.z * uExpo;
   }
 
@@ -705,8 +803,9 @@ const UNIFORMS = [
   'uSrcOrigin', 'uSrcSize', 'uOutOrigin', 'uOutSize', 'uFlip', 'uScale', 'uRefShort',
   'uGeoOn', 'uGeoMat', 'uGeoOff',
   'uLutN', 'uHeadroom', 'uSharp', 'uSoft', 'uClarity', 'uCornerSoft', 'uSweet', 'uBlurShape', 'uMaxR',
-  'uDist', 'uCA', 'uMaxCA', 'uVig', 'uVigHard', 'uVigWob', 'uVigSat', 'uVigOff',
-  'uWB', 'uExpo', 'uVeil', 'uSat', 'uFlash',
+  'uDist', 'uDistK2', 'uCA', 'uMaxCA', 'uLoCA', 'uComa', 'uSpherical', 'uMicroContrast',
+  'uVig', 'uVigHard', 'uVigWob', 'uVigSat', 'uVigOff',
+  'uWB', 'uVeilCol', 'uFlareCol', 'uExpo', 'uVeil', 'uSat', 'uFlash', 'uFlareTint',
   'uHalCol', 'uHal', 'uBloom', 'uFlare', 'uFilmAmt', 'uContrast',
   'uTone', 'uColorDip', 'uDehaze', 'uDenoise', 'uCurveOn', 'uHslOn', 'uHsl',
   'uSplitSh', 'uSplitHi', 'uSplitBal', 'uClipWarn',
@@ -737,23 +836,30 @@ export function lensUniforms(camera, camAmt = 1) {
     sharp: clampN(Math.max(0, sharp), 0, 1.2),
     soft: clampN(Math.max(0, -sharp), 0, 1.2),
     clarity: clampN(num(c.clarity, 0) * a, -0.6, 0.8),
+    microContrast: clampN(num(c.microContrast, 0) * a, -0.75, 1.3),
     cornerSoft: clampN(num(c.cornerSoft, 0) * a, 0, 1.8),
     sweet: clampN(num(c.sweetSpot, 0.35), 0, 0.95),
     blurShape: clampN(num(c.blurShape, 0), -1, 1),
-    dist: clampN(num(c.distortion, 0) * a, -0.15, 0.15),
+    dist: clampN(num(c.distortion, 0) * a, -0.22, 0.22),
+    distK2: clampN(num(c.distK2, 0) * a, -0.18, 0.18),
     ca: clampN(num(c.ca, 0) * a, 0, 1.5),
+    loca: clampN(num(c.loca, 0) * a, 0, 1.5),
+    coma: clampN(num(c.coma, 0) * a, 0, 1.5),
+    spherical: clampN(num(c.spherical, 0) * a, 0, 1.5),
     vig: Math.max(0, num(c.vignette, 0) * a * 1.6),
     vigHard: clampN(num(c.vignetteHardness, 2), 1, 6),
     vigOff: [num(off[0], 0) * a, num(off[1], 0) * a],
     vigWob: clampN(num(c.vignetteWobble, 0) * a, 0, 1.5),
-    vigSat: clampN(num(c.vigSat, 0) * a, 0, 1.5),
+    vigSat: clampN(num(c.vigSat, 0) * a, -0.6, 1.5),
     sat: clampN(num(c.sat, 0) * a, -0.6, 0.6),
     veil: clampN(num(c.veil, 0) * a, 0, 0.2),
+    veilTint: clampN(num(c.veilTint, 0), -1, 1),
     contrast: num(c.contrast, 0) * a,
     warmth: num(c.warmth, 0) * a,
     tint: num(c.tint, 0) * a,
     bloom: clampN(num(c.bloom, 0) * a, 0, 1.5),
     flare: num(c.flare, 0) * a,
+    flareTint: clampN(num(c.flareTint, 0), -1, 1),
     flash: clampN(num(c.flash, 0.6), 0, 1),
     vigAxis: clampN(num(c.vigAxis, 0), 0, 1),
     band: clampN(num(c.banding, 0) * a, 0, 1.5),
@@ -927,16 +1033,26 @@ export function lensReach(camera, camAmt, frameW, frameH, extra = null) {
   }
   const L = lensUniforms(camera, camAmt);
   const short = Math.min(frameW, frameH), hd = 0.5 * Math.hypot(frameW, frameH);
-  const dist = Math.abs(L.dist) * 0.4 * hd;
+  let dist = 0;
+  if (L.dist !== 0 || L.distK2 !== 0) {
+    const denom = Math.max(0.25, 1 + L.dist + L.distK2);
+    // Exact upper bound of |d * (k1*(d^2-1) + k2*(d^4-1)) / denom| on d ∈ [0, 1]
+    dist = ((Math.abs(L.dist) * 0.385 + Math.abs(L.distK2) * 0.535) / denom) * hd;
+  }
   const ca = Math.min(L.ca * 0.0025 * hd, MAX_CA_K * short);
   const blur = Math.min((L.soft + L.cornerSoft) * BLUR_K, MAX_R_K) * short * 2.5;
+  const loca = L.loca > 0 ? Math.max(1, 0.0015 * short) : 0;
+  const coma = L.coma > 0 ? Math.min(L.coma * 0.0065, MAX_R_K) * short * 1.4 : 0;
+  const userSharp = extra ? Math.max(0, num(extra.sharpen, 0)) : 0;
   const userClar = extra ? num(extra.clarity, 0) : 0;
   const userDehaze = extra ? num(extra.dehaze, 0) : 0;
   const userDenoise = extra ? num(extra.denoise, 0) : 0;
+  const sh = (L.sharp + userSharp) > 0 ? Math.max(0.75, 0.0008 * short) : 0;
+  const mc = L.microContrast !== 0 ? Math.max(1, 0.0024 * short) : 0;
   const clar = (L.clarity + userClar) !== 0 ? CLARITY_K * short : 0;
   const dh = userDehaze !== 0 ? 0.014 * short : 0;
   const dn = userDenoise > 0.001 ? Math.min(9, 0.0032 * short) : 0;
-  return Math.ceil(dist + ca + Math.max(blur, clar, dh, dn));
+  return Math.ceil(dist + Math.max(ca + blur, loca, coma, sh, mc, clar, dh, dn));
 }
 
 export class Renderer {
@@ -1255,13 +1371,18 @@ export class Renderer {
     gl.uniform1f(u.uSharp, clampN(Lu.sharp + Math.max(0, num(P.sharpen, 0)), 0, 1.8));
     gl.uniform1f(u.uSoft, Lu.soft);
     gl.uniform1f(u.uClarity, clampN(Lu.clarity + num(P.clarity, 0), -0.9, 1.0));
+    gl.uniform1f(u.uMicroContrast, Lu.microContrast);
     gl.uniform1f(u.uCornerSoft, Lu.cornerSoft);
     gl.uniform1f(u.uSweet, Lu.sweet);
     gl.uniform1f(u.uBlurShape, Lu.blurShape);
     gl.uniform1f(u.uMaxR, MAX_R_K * refShort);
     gl.uniform1f(u.uDist, Lu.dist);
+    gl.uniform1f(u.uDistK2, Lu.distK2);
     gl.uniform1f(u.uCA, Lu.ca);
     gl.uniform1f(u.uMaxCA, MAX_CA_K * refShort);
+    gl.uniform1f(u.uLoCA, Lu.loca);
+    gl.uniform1f(u.uComa, Lu.coma);
+    gl.uniform1f(u.uSpherical, Lu.spherical);
     gl.uniform1f(u.uVig, Lu.vig);
     gl.uniform1f(u.uVigHard, Lu.vigHard);
     gl.uniform2f(u.uVigOff, Lu.vigOff[0], Lu.vigOff[1]);
@@ -1269,6 +1390,23 @@ export class Renderer {
     gl.uniform1f(u.uVigSat, Lu.vigSat);
     gl.uniform1f(u.uSat, Lu.sat);
     gl.uniform1f(u.uVeil, Lu.veil);
+    // veil spectral tint (-1 cool cyan-green .. 0 neutral .. +1 warm amber-gold)
+    const vt = Lu.veilTint;
+    const vr = 1 + (vt > 0 ? vt * 0.26 : vt * 0.24);
+    const vg = 1 + (vt > 0 ? -vt * 0.01 : -vt * 0.02);
+    const vb = 1 + (vt > 0 ? -vt * 0.32 : -vt * 0.24);
+    const vl = 0.2126 * vr + 0.7152 * vg + 0.0722 * vb;
+    gl.uniform3f(u.uVeilCol, vr / vl, vg / vl, vb / vl);
+    // coating-specific flare colour (-1 cool blue/violet, -0.5 emerald-teal/T*, 0 warm-amber, +0.5 gold, +1 rose)
+    const ft = Lu.flareTint;
+    const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    let fc;
+    if (ft <= -0.5) fc = lerp3([0.55, 0.78, 1.0], [0.58, 0.95, 0.78], (ft + 1) * 2);
+    else if (ft < 0) fc = lerp3([0.58, 0.95, 0.78], [1.0, 0.78, 0.55], (ft + 0.5) * 2);
+    else if (ft <= 0.5) fc = lerp3([1.0, 0.78, 0.55], [1.0, 0.68, 0.42], ft * 2);
+    else fc = lerp3([1.0, 0.68, 0.42], [1.0, 0.48, 0.68], (ft - 0.5) * 2);
+    gl.uniform3f(u.uFlareCol, fc[0], fc[1], fc[2]);
+    gl.uniform1f(u.uFlareTint, ft);
     const flash = num(P.flash, 0) > 0 ? Lu.flash * Math.min(1, num(P.flash, 0)) : 0;
     gl.uniform1f(u.uFlash, flash);
 

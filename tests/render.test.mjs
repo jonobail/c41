@@ -7,11 +7,13 @@ import { lensReach, lensUniforms, CAM_AMT_MAX, remapGeometry, remapSourceRect, f
 import { remapStripSource } from '../js/exporter.js';
 
 const RANGES = {
-  vignette: [0, 1.5], vignetteHardness: [2, 4], sharpness: [-1, 1], cornerSoft: [0, 1],
-  ca: [0, 1], contrast: [-0.3, 0.3], warmth: [-0.1, 0.1], bloom: [0, 1], flare: [0, 1],
-  vignetteWobble: [0, 1], vigSat: [0, 1], clarity: [-0.6, 0.6], sweetSpot: [0, 0.9],
-  blurShape: [-1, 1], distortion: [-0.1, 0.1], sat: [-0.3, 0.3], veil: [0, 0.1],
-  tint: [-0.1, 0.1], flash: [0, 1], leak: [0, 1], vigAxis: [0, 1], banding: [0, 1], swirl: [0, 1],
+  vignette: [0, 1.5], vignetteHardness: [1.4, 5.0], sharpness: [-1, 1], cornerSoft: [0, 1],
+  ca: [0, 1], loca: [0, 1], coma: [0, 1], spherical: [0, 1], microContrast: [-0.5, 1],
+  contrast: [-0.3, 0.3], warmth: [-0.15, 0.15], bloom: [0, 1], flare: [0, 1], flareTint: [-1, 1],
+  vignetteWobble: [0, 1], vigSat: [-0.5, 1], clarity: [-0.6, 0.6], sweetSpot: [0, 0.9],
+  blurShape: [-1, 1], distortion: [-0.15, 0.15], distK2: [-0.12, 0.12], sat: [-0.3, 0.3],
+  veil: [0, 0.1], veilTint: [-1, 1], tint: [-0.15, 0.15], flash: [0, 1], leak: [0, 1],
+  vigAxis: [0, 1], banding: [0, 1], swirl: [0, 1],
 };
 const ZERO_EXEMPT = ['vignetteHardness', 'sweetSpot', 'flash'];
 const BODIES = ['slr', 'rangefinder', 'compact', 'medium', 'toy', 'fisheye', 'multilens', 'pano', 'spinner', 'none'];
@@ -42,7 +44,7 @@ test('cameras: schema, ranges, unique ids', () => {
       assert.ok(c.year >= 1900 && c.year <= 2030, `${c.id}.year`);
       assert.ok(c.summary.length > 10 && c.traits.length > 40, `${c.id} prose`);
     }
-    assert.ok(c.formatScale >= 0.5 && c.formatScale <= 3, `${c.id}.formatScale`);
+    assert.ok(c.formatScale >= 0.35 && c.formatScale <= 3, `${c.id}.formatScale`);
     for (const [k, [lo, hi]] of Object.entries(RANGES)) {
       const v = c.params[k];
       assert.equal(typeof v, 'number', `${c.id}.params.${k}`);
@@ -88,6 +90,19 @@ test('lensUniforms / lensReach: scale with lens amount, clamp at 150 %', () => {
   const r = lensReach(holga, 1.5, 4000, 4000);
   assert.ok(r > 64 && r < 0.08 * 4000, `holga reach ${r}`);
   assert.ok(lensReach(getCamera('leica-m6'), 1, 4000, 6000) < lensReach(holga, 1, 4000, 6000));
+  // New optical uniforms: veilTint/flareTint do NOT scale with camAmt; spatial optics do
+  const fm2_1 = lensUniforms(getCamera('nikon-fm2'), 1), fm2_15 = lensUniforms(getCamera('nikon-fm2'), 1.5);
+  assert.equal(fm2_1.veilTint, fm2_15.veilTint, 'veilTint is invariant to camAmt');
+  assert.equal(fm2_1.flareTint, fm2_15.flareTint, 'flareTint is invariant to camAmt');
+  assert.ok(fm2_15.spherical > fm2_1.spherical && fm2_15.loca > fm2_1.loca && fm2_15.coma > fm2_1.coma);
+  // Pincushion distortion needs larger reach than equal-magnitude barrel
+  const barrelReach = lensReach({ params: { distortion: 0.1 } }, 1, 3000, 2000);
+  const pinReach = lensReach({ params: { distortion: -0.1 } }, 1, 3000, 2000);
+  assert.ok(pinReach > barrelReach && barrelReach > 0, `pincushion ${pinReach} > barrel ${barrelReach}`);
+  // Individual new spatial optics each raise lensReach above 0
+  for (const k of ['distK2', 'loca', 'coma', 'microContrast']) {
+    assert.ok(lensReach({ params: { [k]: 0.1 } }, 1, 3000, 2000) > 0, `${k} raises lensReach`);
+  }
 });
 
 test('frameLayout: format crops follow the photo orientation', () => {
