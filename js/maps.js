@@ -61,7 +61,7 @@ export function gaussBlur(data, w, h, sigma) {
   return b;
 }
 
-export function buildMaps(proxyCanvas) {
+export function buildMaps(proxyCanvas, opts = null) {
   const sw = proxyCanvas.width, sh = proxyCanvas.height;
   const k = Math.min(1, MAX_EDGE / Math.max(sw, sh));
   const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
@@ -102,7 +102,7 @@ export function buildMaps(proxyCanvas) {
   hmap.getContext('2d').putImageData(hImg, 0, 0);
   bmap.getContext('2d').putImageData(bImg, 0, 0);
 
-  const flare = findFlare(proxyCanvas);
+  const flare = opts && opts.skipFlare ? { x: 0.5, y: 0.3, strength: 0 } : findFlare(proxyCanvas);
 
   small.width = small.height = 0;
   return { hmap, bmap, flare };

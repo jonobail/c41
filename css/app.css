@@ -1994,11 +1994,6 @@ button {
   border-color: var(--line);
   color: var(--text);
 }
-.cam-border-btn[aria-pressed="true"] {
-  background: var(--accent-dim);
-  border-color: var(--accent-ring);
-  color: var(--accent-2);
-}
 
 .cam-strip {
   display: flex;

@@ -349,21 +349,19 @@ function biasedLeaks(seed, bias) {
 }
 
 // ---------------------------------------------------------------------------
-// Format crop + film border ("frame")
+// Format crop + in-picture negative masks ("frame")
 // ---------------------------------------------------------------------------
-// frameLayout(W, H, { camera, film, crop, border, seed }) →
+// frameLayout(W, H, { camera, film, crop, seed, aspectOverride }) →
 //   { full: [W, H],                 original image size (px)
 //     crop: [x, y, w, h],           frame rect inside the original (px) — everything lens/film
 //                                   related is defined relative to this rect
-//     inner: [l, t],                where the frame sits inside the output (px, full-res units)
-//     out: [w, h],                  output size incl. border (px, full-res units; round × scale)
-//     style: null | '135' | 'half' | '120' | 'holga' | 'sprocket' | 'polaroid' | 'instax',
-//     filmBorder: bool,             border is film (grain/leaks continue onto it) vs paper
-//     mask: null | 'sprocket' | 'rounded',   in-picture mask (drawn with or without a border)
+//     inner: [0, 0],                frame origin inside output
+//     out: [w, h],                  output size (px, full-res units; round × scale)
+//     style: null,
+//     filmBorder: bool,             true when grain/leaks continue across an in-picture film mask
+//     mask: null | 'sprocket' | 'rounded',   in-picture mask (part of the camera's negative)
 //     draw: null | (ctx, ox, oy, k) => void }
-// draw() paints the border into a 2D context whose pixel (0,0) is output pixel (ox, oy) at
-// k output px per full-res px. Opaque where the border is, transparent over the picture.
-// In-picture masks are part of the negative, so they are drawn even without a border:
+// In-picture masks are part of the negative itself:
 //   'sprocket' (camera.frame 'sprocket'): the frame's short side is the full 35 mm film width —
 //              black KS perforations + edge print are painted OVER the picture;
 //   'rounded'  (camera.mask): soft black rounded corners with a moulded-plastic wobble.
@@ -377,24 +375,11 @@ export function instantType(film) {
 }
 
 const INSTANT = {
-  // image aspect (long/short), border as fractions of the image short edge
-  polaroid: { aspect: 1, side: 0.057, top: 0.076, bottom: 0.278, paper: ['#f4f2ec', '#e9e6dd'] },
-  instax: { aspect: 62 / 46, side: 0.087, top: 0.14, bottom: 0.38, paper: ['#f6f5f1', '#eceae4'] },
-  // a landscape Instax reads like Instax Wide: slimmer margins, the thick strip still at the bottom
-  instaxLand: { aspect: 62 / 46, side: 0.075, top: 0.12, bottom: 0.27, paper: ['#f6f5f1', '#eceae4'] },
-};
-// film geometry in mm: across = picture dimension across the film, side = border on the
-// across axis (rebate + a sliver of scanner holder), end = border on the along-film axis
-const ROLL = {
-  135: { across: 24, side: 6.2, end: 2.4, filmEdge: 5.5 },
-  half: { across: 24, side: 6.2, end: 2.0, filmEdge: 5.5 },
-  120: { across: 56, side: 3.8, end: 3.4, filmEdge: 2.6 },
-  holga: { across: 56, side: 5.4, end: 5.0, filmEdge: 2.6 },
-  // picture spans the whole 35 mm width: the border is only the scanner holder
-  sprocket: { across: 35, side: 1.1, end: 2.2, filmEdge: 0 },
+  polaroid: { aspect: 1 },
+  instax: { aspect: 62 / 46 },
 };
 
-export function frameLayout(W, H, { camera = null, film = null, crop = false, border = false, seed = 1, aspectOverride = null } = {}) {
+export function frameLayout(W, H, { camera = null, film = null, crop = false, seed = 1, aspectOverride = null } = {}) {
   W = Math.max(1, W); H = Math.max(1, H);
   const inst = instantType(film);
   const land = W >= H;
@@ -421,49 +406,20 @@ export function frameLayout(W, H, { camera = null, film = null, crop = false, bo
   }
   const [, , cw, ch] = cr;
   const L = { full: [W, H], crop: cr, inner: [0, 0], out: [cw, ch], style: null, filmBorder: false, mask: null, draw: null };
-  const pinfo = () => ({
-    label: filmLabel(film), ink: edgeInk(film), frameNo: 1 + Math.floor(mulberry32((seed >>> 0) ^ 0x51f7)() * 35),
-    seed: seed >>> 0,
-  });
-  const maskOf = () => {
-    if (inst || !camera) return null;
-    if (camera.frame === 'sprocket') return 'sprocket';
-    if (camera.mask && camera.mask.type === 'rounded') return 'rounded';
-    return null;
-  };
-  if (!border) {
-    L.mask = maskOf();
-    if (L.mask) {
-      const I = pinfo();
-      L.filmBorder = true;
-      L.draw = (ctx, ox, oy, k) => drawPictureMask(ctx, ox, oy, k, L, I, camera);
-    }
-    return L;
+  if (!inst && camera) {
+    if (camera.frame === 'sprocket') L.mask = 'sprocket';
+    else if (camera.mask && camera.mask.type === 'rounded') L.mask = 'rounded';
   }
-
-  const short = Math.min(cw, ch);
-  if (inst) {
-    const g = INSTANT[inst === 'instax' && cw > ch ? 'instaxLand' : inst];
-    const l = g.side * short, t = g.top * short, b = g.bottom * short;
-    Object.assign(L, { inner: [l, t], out: [cw + 2 * l, ch + t + b], style: inst, filmBorder: false });
-    L.draw = (ctx, ox, oy, k) => drawInstant(ctx, ox, oy, k, L, g);
-    return L;
+  if (L.mask) {
+    const I = {
+      label: filmLabel(film),
+      ink: edgeInk(film),
+      frameNo: 1 + Math.floor(mulberry32((seed >>> 0) ^ 0x51f7)() * 35),
+      seed: seed >>> 0,
+    };
+    L.filmBorder = true;
+    L.draw = (ctx, ox, oy, k) => drawPictureMask(ctx, ox, oy, k, L, I, camera);
   }
-  const style = (camera && camera.frame) || '135';
-  const geo = ROLL[style] || ROLL[135];
-  // half-frame: the 24 mm across-film side is the LONG side; otherwise the short side
-  const acrossIsLong = style === 'half';
-  const acrossVertical = acrossIsLong ? !(cw >= ch) : cw >= ch;
-  const acrossPx = acrossVertical ? ch : cw;
-  const mm = acrossPx / geo.across;
-  const side = geo.side * mm, end = geo.end * mm;
-  const l = acrossVertical ? end : side, t = acrossVertical ? side : end;
-  Object.assign(L, { inner: [l, t], out: [cw + 2 * l, ch + 2 * t], style, filmBorder: true, mask: maskOf() });
-  const info = { geo, mm, acrossVertical, notch: !!(camera && camera.notch), ...pinfo() };
-  L.draw = (ctx, ox, oy, k) => {
-    drawRoll(ctx, ox, oy, k, L, info);
-    if (L.mask) drawPictureMask(ctx, ox, oy, k, L, info, camera);
-  };
   return L;
 }
 
@@ -604,165 +560,10 @@ function rrect(g, x, y, w, h, r) {
   g.closePath();
 }
 
-function drawInstant(ctx, ox, oy, k, L, g) {
-  const [ow, oh] = L.out, [l, t] = L.inner, cw = L.crop[2], ch = L.crop[3];
-  ctx.save();
-  ctx.setTransform(k, 0, 0, k, -ox, -oy);
-  const gr = ctx.createLinearGradient(0, 0, ow * 0.3, oh);
-  gr.addColorStop(0, g.paper[0]); gr.addColorStop(1, g.paper[1]);
-  ctx.fillStyle = gr;
-  ctx.fillRect(0, 0, ow, oh);
-  ctx.globalCompositeOperation = 'destination-out';
-  ctx.fillStyle = '#000';
-  ctx.beginPath();
-  ctx.rect(l, t, cw, ch);
-  ctx.fill();
-  // the developer spread leaves a faint darker rim on the picture edge
-  ctx.globalCompositeOperation = 'source-over';
-  const s = Math.min(cw, ch);
-  ctx.strokeStyle = 'rgba(28,22,18,0.35)';
-  ctx.lineWidth = s * 0.006;
-  ctx.strokeRect(l + s * 0.003, t + s * 0.003, cw - s * 0.006, ch - s * 0.006);
-  ctx.restore();
-}
-
 // Smooth seeded 1-D noise in −1..1 (sum of a few sines) for rough mask edges.
 function edgeNoise(seed) {
   const r = mulberry32(seed);
   const terms = Array.from({ length: 5 }, (_, i) => ({ f: (i + 1) * (2 + r() * 3), p: r() * 6.283, a: 1 / (i + 1.3) }));
   const norm = terms.reduce((s, x) => s + x.a, 0);
   return (u) => terms.reduce((s, x) => s + x.a * Math.sin(u * x.f + x.p), 0) / norm;
-}
-
-function drawRoll(ctx, ox, oy, k, L, I) {
-  const { geo, mm } = I;
-  const [l, t] = L.inner, cw = L.crop[2], ch = L.crop[3];
-  // local film coords: u along the film (0..A = picture), v across (0..C = picture)
-  const A = I.acrossVertical ? cw : ch, C = I.acrossVertical ? ch : cw;
-  const side = geo.side * mm, end = geo.end * mm;
-  ctx.save();
-  ctx.setTransform(k, 0, 0, k, -ox, -oy);
-  if (I.acrossVertical) ctx.transform(1, 0, 0, 1, l, t);
-  else ctx.transform(0, -1, 1, 0, l, t + ch);   // (u, v) → (x = l + v, y = t + A − u)
-  const rnd = mulberry32(I.seed ^ 0x2f00d);
-
-  // scanner holder (outside the film) + film base
-  ctx.fillStyle = '#030303';
-  ctx.fillRect(-end, -side, A + 2 * end, C + 2 * side);
-  ctx.fillStyle = I.ink.base;
-  ctx.fillRect(-end, -geo.filmEdge * mm, A + 2 * end, C + 2 * geo.filmEdge * mm);
-
-  // picture window
-  ctx.globalCompositeOperation = 'destination-out';
-  ctx.fillStyle = '#000';
-  if (L.style === 'holga') {
-    // filed / rough plastic mask: wobbly edges, rounded corners, soft fall-off
-    const N = 90, amp = 0.55 * mm;
-    const nz = [0, 1, 2, 3].map((i) => edgeNoise(I.seed * 7 + i * 101 + 3));
-    const rc = 3.2 * mm;
-    ctx.shadowColor = '#000';
-    ctx.shadowBlur = 0.9 * mm * k;
-    ctx.beginPath();
-    const pts = [];
-    const push = (u, v) => pts.push([u, v]);
-    // four wobbly edges joined by rounded corners
-    const e = (i, f) => amp * nz[i](f * 6.283) + amp * 0.4;
-    const corner = (cu, cv, a0, inU, inV) => {
-      for (let j = 1; j < 8; j++) {
-        const a = a0 + (j / 8) * Math.PI / 2;
-        push(cu + Math.cos(a) * (rc - inU), cv + Math.sin(a) * (rc - inV));
-      }
-    };
-    for (let i = 0; i <= N; i++) { const f = i / N; push(rc + f * (A - 2 * rc), e(0, f)); }
-    corner(A - rc, rc, -Math.PI / 2, e(1, 0), e(0, 1));
-    for (let i = 0; i <= N; i++) { const f = i / N; push(A - e(1, f), rc + f * (C - 2 * rc)); }
-    corner(A - rc, C - rc, 0, e(1, 1), e(2, 0));
-    for (let i = 0; i <= N; i++) { const f = i / N; push(A - rc - f * (A - 2 * rc), C - e(2, f)); }
-    corner(rc, C - rc, Math.PI / 2, e(3, 0), e(2, 1));
-    for (let i = 0; i <= N; i++) { const f = i / N; push(e(3, f), C - rc - f * (C - 2 * rc)); }
-    corner(rc, rc, Math.PI, e(3, 1), e(0, 0));
-    pts.forEach(([u, v], i) => (i ? ctx.lineTo(u, v) : ctx.moveTo(u, v)));
-    ctx.closePath();
-    ctx.fill();
-    ctx.shadowBlur = 0;
-  } else {
-    ctx.beginPath();
-    rrect(ctx, 0, 0, A, C, (L.style === '120' ? 0.5 : L.style === 'sprocket' ? 0 : 0.3) * mm);
-    ctx.fill();
-    if (I.notch) {
-      // Hasselblad film-back notches: small V cut-outs on one frame edge
-      ctx.beginPath();
-      for (const f of [0.3, 0.38]) {
-        ctx.moveTo(A - 0.1 * mm, C * f - 0.6 * mm);
-        ctx.lineTo(A + 0.9 * mm, C * f);
-        ctx.lineTo(A - 0.1 * mm, C * f + 0.6 * mm);
-        ctx.closePath();
-      }
-      ctx.fill();
-    }
-  }
-  ctx.globalCompositeOperation = 'source-over';
-
-  const font = (h) => `600 ${h}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
-  const text = (str, u, v, h, alpha = 1) => {
-    ctx.font = font(h);
-    ctx.textBaseline = 'middle';
-    ctx.globalAlpha = alpha;
-    ctx.shadowColor = I.ink.glow;
-    ctx.shadowBlur = 0.35 * mm * k;
-    ctx.fillStyle = I.ink.ink;
-    ctx.fillText(str, u, v);
-    ctx.shadowBlur = 0;
-    ctx.globalAlpha = 1;
-  };
-  const n = I.frameNo;
-  if (L.style === 'sprocket') {
-    // perforations + edge print are on the picture (drawPictureMask)
-  } else if (L.style === '135' || L.style === 'half') {
-    // KS perforations: 1.98 mm along × 2.79 mm across, pitch 4.75 mm, 0.71 mm from the picture
-    const pitch = 4.75 * mm, pw = 1.98 * mm, ph = 2.79 * mm, gap = 0.71 * mm;
-    const phase = rnd() * pitch;
-    ctx.fillStyle = '#ece8df';
-    ctx.beginPath();
-    for (let u = -end - pitch + phase; u < A + end; u += pitch) {
-      rrect(ctx, u, -gap - ph, pw, ph, 0.45 * mm);
-      rrect(ctx, u, C + gap, pw, ph, 0.45 * mm);
-    }
-    ctx.fill();
-    // edge print in the outer margin (perforation → film edge)
-    const vTop = -(gap + ph + (geo.filmEdge * mm - gap - ph) / 2);
-    const vBot = C + (gap + ph + (geo.filmEdge * mm - gap - ph) / 2);
-    const th = 1.15 * mm;
-    if (L.style === 'half') {
-      text(`${n}`, A * 0.1, vTop, th);
-      text(I.label, A * 0.35, vTop, th * 0.9);
-      text(`\u25B6${n}A`, A * 0.1, vBot, th);
-    } else {
-      text(I.label, A * 0.1, vTop, th);
-      text(`${n}`, A * 0.78, vTop, th);
-      text(`\u25B6${n}A`, A * 0.06, vBot, th);
-      text(`${n + 1}`, A * 0.86, vBot, th);
-      // DX-style barcode
-      ctx.fillStyle = I.ink.ink;
-      ctx.globalAlpha = 0.9;
-      let u = A * 0.34;
-      const bh = 1.0 * mm;
-      for (let i = 0; i < 22; i++) {
-        const w = (rnd() < 0.5 ? 0.32 : 0.62) * mm;
-        if (i % 2 === 0) ctx.fillRect(u, vBot - bh / 2, w, bh);
-        u += w + 0.28 * mm;
-      }
-      ctx.globalAlpha = 1;
-    }
-  } else {
-    // 120: edge print near the film edge, frame numbers on the other edge
-    const vTop = -geo.filmEdge * mm * 0.5, vBot = C + geo.filmEdge * mm * 0.5;
-    const th = 1.25 * mm;
-    const a = L.style === 'holga' ? 0.75 : 1;
-    text(I.label, A * 0.08, vTop, th, a);
-    text(`${n % 16 || 16}`, A * 0.62, vBot, th * 1.2, a);
-    text('\u25B6', A * 0.7, vBot, th, a);
-    if (L.style !== 'holga') text(`${(n % 16 || 16) + 1}`, A * 0.94, vTop, th, 0.5);
-  }
-  ctx.restore();
 }

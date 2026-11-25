@@ -16,8 +16,8 @@ const stage = $('stage');
 const view = $('view');
 const panelEl = $('panel');
 
-const STORE_KEY = 'c41.state.v2';
-const LEGACY_STORE_KEY = 'c41.state.v1';
+const STORE_KEY = 'c41.state.v3';
+const LEGACY_STORE_KEY = 'c41.state.v2';
 const UI_KEY = 'c41.ui.v3';
 const PROXY_MAX = 2048;
 const PROXY_MIN = 1200;
@@ -67,11 +67,11 @@ function defaults() {
     filmId: M.films?.DEFAULT_FILM_ID ?? 'kodak-portra-400',
     cameraId: M.cameras?.DEFAULT_CAMERA_ID ?? 'none',
     filmAmt: 1, camAmt: 1,
-    grain: 1, halation: 1, flare: 1,
+    grain: 1, halation: 1, flare: 0,
     leak: 0, leakSeed: 1, leakStyle: 'warm',
     dust: 0, dustSeed: 1,
     dateOn: false, dateFormat: 'classic', dateColor: 'orange', date: isoDate(new Date()),
-    cropOn: true, borderOn: false, flashOn: false,
+    cropOn: true, flashOn: false,
     gel: 'none',
     camMasks: {},
     ...defaultDevelop(),
@@ -85,7 +85,7 @@ const history = new HistoryStack(50);
 function loadState() {
   const d = defaults();
   try {
-    const raw = localStorage.getItem(STORE_KEY) || localStorage.getItem(LEGACY_STORE_KEY);
+    const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       const s = JSON.parse(raw);
       for (const k of Object.keys(d)) {
@@ -99,6 +99,13 @@ function loadState() {
           continue;
         }
         if (typeof s[k] === typeof d[k]) d[k] = s[k];
+      }
+    } else {
+      // Carry over film & camera choice from v2 without inheriting legacy flare=1 or borderOn
+      const prev = JSON.parse(localStorage.getItem(LEGACY_STORE_KEY) || 'null');
+      if (prev && typeof prev === 'object') {
+        if (typeof prev.filmId === 'string') d.filmId = prev.filmId;
+        if (typeof prev.cameraId === 'string') d.cameraId = prev.cameraId;
       }
     }
   } catch { /* private mode / corrupt */ }
@@ -368,10 +375,10 @@ function ensureLayout() {
   const geo = buildGeometry(S.fullW, S.fullH, state);
   const [lw, lh] = geo.logImg;
   const asp = aspectOverrideValue();
-  const key = `${lw}x${lh}|${c.id}:${c.maskId || ''}|${f.id}|${state.cropOn}|${state.borderOn}|${asp}|${state.seed}|${S.proxy.width}`;
+  const key = `${lw}x${lh}|${c.id}:${c.maskId || ''}|${f.id}|${state.cropOn}|${asp}|${state.seed}|${S.proxy.width}`;
   if (key === S.layoutKey && S.layout) return false;
   const L = M.overlays.frameLayout(lw, lh, {
-    camera: c, film: f, crop: state.cropOn, border: state.borderOn, seed: state.seed, aspectOverride: asp,
+    camera: c, film: f, crop: state.cropOn, seed: state.seed, aspectOverride: asp,
   });
   const prev = S.layout;
   S.layout = L;
@@ -889,7 +896,7 @@ function buildDialDeck({ items, defaultKey, extraStartPills = [], onSelect = nul
 
 function syncControls() {
   markFilm(); markCamera();
-  for (const k of ['cropOn', 'borderOn', 'flashOn', 'filmAmt', 'camAmt', ...ADJUST_KEYS, ...EFFECT_KEYS, 'straighten']) {
+  for (const k of ['cropOn', 'flashOn', 'filmAmt', 'camAmt', ...ADJUST_KEYS, ...EFFECT_KEYS, 'straighten']) {
     ctl[k]?.set?.(state[k]);
   }
   ctl.leakStyle?.set(state.leakStyle);
@@ -1094,7 +1101,6 @@ function buildCameraPane() {
     ctl.camMaskRow,
     h('div', { class: 'cam-toggles' },
       tog('cropOn', 'Crop'),
-      tog('borderOn', 'Border'),
       tog('flashOn', 'Flash')),
     ctl.gelRow);
   ctl.camCards = cards;
@@ -2036,7 +2042,6 @@ const CAM = {
   mapTimer: 0,
   tinyCanvas: null,
   maps: null,
-  flarePoint: { x: 0.5, y: 0.3, strength: 0 },
   evSlider: null,
   roll: [],            // [{ file, thumbUrl }]
   lastShot: null,
@@ -2047,8 +2052,6 @@ function camSyncTelemetry() {
   const tf = $('cam-tel-film'), tc = $('cam-tel-cam');
   if (tf) tf.textContent = `${f.name}${f.iso ? ` · ${f.iso}` : ''}`;
   if (tc) tc.textContent = c.id === 'none' ? 'NEUTRAL' : c.name.toUpperCase();
-  const bb = $('cam-border-btn');
-  if (bb) bb.setAttribute('aria-pressed', String(!!state.borderOn));
 }
 
 function camSyncDevices() {
@@ -2231,11 +2234,11 @@ function camEnsureAssets(vw, vh) {
 
   const f = film(), c = camera();
   const asp = aspectOverrideValue();
-  const lk = `${vw}x${vh}|${c.id}:${c.maskId || ''}|${f.id}|${state.cropOn}|${state.borderOn}|${asp}|${state.seed}`;
+  const lk = `${vw}x${vh}|${c.id}:${c.maskId || ''}|${f.id}|${state.cropOn}|${asp}|${state.seed}`;
   if (CAM.layoutKey !== lk && M.overlays?.frameLayout) {
     CAM.layoutKey = lk;
     const L = M.overlays.frameLayout(vw, vh, {
-      camera: c, film: f, crop: state.cropOn, border: state.borderOn, seed: state.seed, aspectOverride: asp,
+      camera: c, film: f, crop: state.cropOn, seed: state.seed, aspectOverride: asp,
     });
     CAM.layout = L;
     if (CAM.frame) { releaseCanvas(CAM.frame.canvas); CAM.frame = null; }
@@ -2273,16 +2276,16 @@ function camTick(now) {
     if (CAM.live.mirrored) { tg.save(); tg.translate(64, 0); tg.scale(-1, 1); tg.drawImage(CAM.live.source, 0, 0, 64, th); tg.restore(); }
     else tg.drawImage(CAM.live.source, 0, 0, 64, th);
     if (CAM.maps) { releaseCanvas(CAM.maps.hmap); releaseCanvas(CAM.maps.bmap); }
-    CAM.maps = M.maps.buildMaps(CAM.tinyCanvas);
+    CAM.maps = M.maps.buildMaps(CAM.tinyCanvas, { skipFlare: true });
     CAM.renderer.setMaps({ hmap: CAM.maps.hmap, bmap: CAM.maps.bmap });
-    CAM.flarePoint = CAM.maps.flare || CAM.flarePoint;
   }
 
   const cv = $('cam-view');
   const w0 = cv.width, h0 = cv.height;
   CAM.renderer.setParams(buildParams({
     layout: CAM.layout,
-    flarePoint: CAM.flarePoint,
+    flare: 0,
+    flarePoint: { x: 0.5, y: 0.3, strength: 0 },
     flipH: !!CAM.live.mirrored,
     flipV: false,
     rotate: 0,
@@ -2483,14 +2486,6 @@ function initLiveCameraUi() {
     } catch {
       toast('Couldn’t flip camera.', { tone: 'error' });
     }
-  });
-
-  $('cam-border-btn').addEventListener('click', () => {
-    state.borderOn = !state.borderOn;
-    ctl.borderOn?.set(state.borderOn);
-    CAM.layoutKey = '';
-    saveState();
-    camSyncTelemetry();
   });
 
   for (const b of document.querySelectorAll('.cam-mode-btn[data-cmode]')) {

@@ -39,16 +39,16 @@ const CASES = [
   { id: 'nikon-fm2' },
   { id: 'lomo-lca' },
   { id: 'lomo-petzval-85' },
-  { id: 'holga-120n', border: true },
+  { id: 'holga-120n' },
   { id: 'lomo-diana-f-plus', flash: true, gel: 'magenta' },
-  { id: 'lomo-lc-a-120', border: true },
+  { id: 'lomo-lc-a-120' },
   { id: 'lomo-sprocket-rocket' },
-  { id: 'lomo-sprocket-rocket', border: true, portrait: true },
+  { id: 'lomo-sprocket-rocket', portrait: true },
   { id: 'lomo-spinner-360' },
-  { id: 'lomo-belair-6-12', mask: '6x9', border: true },
+  { id: 'lomo-belair-6-12', mask: '6x9' },
   { id: 'lomo-actionsampler' },
   { id: 'lomo-supersampler', portrait: true },
-  { id: 'lomo-oktomat', border: true },
+  { id: 'lomo-oktomat' },
   { id: 'lomo-diana-mini' },
   { id: 'lomo-fisheye-no2' },
   { id: 'lomo-fisheye-no2', portrait: true, flash: true },
@@ -110,7 +110,7 @@ try {
       const proxy = document.createElement('canvas'); proxy.width = Math.round(W * k); proxy.height = Math.round(H * k);
       const pg = proxy.getContext('2d'); pg.imageSmoothingQuality = 'high'; pg.drawImage(big, 0, 0, proxy.width, proxy.height);
       const camera = cams.effectiveCamera(cams.getCamera(cs.id), cs.mask);
-      const layout = ov.frameLayout(W, H, { camera, film, crop: true, border: !!cs.border, seed: 9 });
+      const layout = ov.frameLayout(W, H, { camera, film, crop: true, seed: 9 });
       const mp = maps.buildMaps(proxy);
       r.setSource(proxy); r.setMaps(mp);
       const params = {

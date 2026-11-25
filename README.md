@@ -8,7 +8,7 @@
 
 C41 is a film-emulation photo editor that runs entirely in the browser and installs to the iPhone
 home screen as a PWA. Pick a photo, then layer a **film stock** (colour, tone, grain, halation) and a
-**camera** (lens character, vignette, format, borders), plus effects like light leaks, dust and an LED
+**camera** (lens character, optical profile, vignette, format), plus effects like light leaks, dust and an LED
 date stamp. Save the result at full resolution. Nothing leaves the device.
 
 **Live demo:** https://jonobail.github.io/c41/

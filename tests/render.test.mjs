@@ -133,41 +133,30 @@ test('frameLayout: format crops follow the photo orientation', () => {
   }
 });
 
-test('frameLayout: borders pad the output; instant films get a paper frame', () => {
+test('frameLayout: instant film aspect crops without external borders', () => {
   const film = { id: 'kodak-portra-400', brand: 'Kodak', name: 'Portra 400', process: 'C-41', params: {} };
-  let f = frameLayout(3000, 2000, { camera: getCamera('canon-ae1'), film, crop: true, border: true });
-  assert.equal(f.style, '135');
-  assert.equal(f.filmBorder, true);
-  assert.equal(typeof f.draw, 'function');
-  assert.ok(f.out[0] > 3000 && f.out[1] > 2000);
-  assert.ok(Math.abs(f.out[0] - 2 * f.inner[0] - 3000) < 1e-6 && Math.abs(f.out[1] - 2 * f.inner[1] - 2000) < 1e-6);
-  // 35 mm: 24 mm picture height, ~35 mm film → rebate top/bottom much bigger than the ends
-  assert.ok(f.inner[1] > f.inner[0] * 2);
-  // half-frame landscape: the film runs vertically → rebate on the left/right
-  f = frameLayout(3000, 2000, { camera: getCamera('olympus-pen-f'), film, crop: true, border: true });
-  assert.equal(f.style, 'half');
-  assert.ok(f.inner[0] > f.inner[1] * 2);
-  f = frameLayout(3000, 2000, { camera: getCamera('holga-120n'), film, crop: true, border: true });
-  assert.equal(f.style, 'holga');
+  let f = frameLayout(3000, 2000, { camera: getCamera('canon-ae1'), film, crop: true });
+  assert.equal(f.style, null);
+  assert.equal(f.draw, null);
+  assert.deepEqual(f.inner, [0, 0]);
+  assert.deepEqual(f.out, [3000, 2000]);
   assert.equal(instantType({ id: 'polaroid-600' }), 'polaroid');
   assert.equal(instantType({ id: 'fuji-instax-mini' }), 'instax');
   assert.equal(instantType(film), null);
-  f = frameLayout(3000, 2000, { camera: getCamera('leica-m6'), film: { id: 'polaroid-600' }, crop: true, border: true });
-  assert.equal(f.style, 'polaroid');
-  assert.equal(f.filmBorder, false);
+  f = frameLayout(3000, 2000, { camera: getCamera('leica-m6'), film: { id: 'polaroid-600' }, crop: true });
   assert.deepEqual(f.crop, [500, 0, 2000, 2000], 'Polaroid is square regardless of camera');
-  const bottom = f.out[1] - f.inner[1] - f.crop[3];
-  assert.ok(bottom > 3 * f.inner[1], 'thick bottom strip');
-  f = frameLayout(2000, 3000, { film: { id: 'fuji-instax-mini' }, crop: true, border: true });
+  assert.deepEqual(f.inner, [0, 0]);
+  assert.deepEqual(f.out, [2000, 2000]);
+  f = frameLayout(2000, 3000, { film: { id: 'fuji-instax-mini' }, crop: true });
   assert.ok(Math.abs(f.crop[3] / f.crop[2] - 62 / 46) < 1e-6);
 });
 
-test('planExport: crop + border geometry, lens-aware pad, strips', () => {
+test('planExport: crop geometry, lens-aware pad, strips', () => {
   const lim = { maxTexture: 16384, maxRenderbuffer: 16384, maxViewport: [16384, 16384] };
   const plain = planExport(3000, 2000, lim);
   assert.equal(plain.outW, 3000); assert.equal(plain.outH, 2000); assert.equal(plain.pad, EXPORT_PAD);
   const film = { id: 'kodak-portra-400', brand: 'Kodak', name: 'Portra 400' };
-  const L = frameLayout(3000, 2000, { camera: getCamera('holga-120n'), film, crop: true, border: true });
+  const L = frameLayout(3000, 2000, { camera: getCamera('holga-120n'), film, crop: true });
   const reach = lensReach(getCamera('holga-120n'), 1.5, L.crop[2], L.crop[3]);
   const g = planExport(3000, 2000, lim, L, reach);
   assert.equal(g.outW, Math.round(L.out[0])); assert.equal(g.outH, Math.round(L.out[1]));
@@ -176,7 +165,7 @@ test('planExport: crop + border geometry, lens-aware pad, strips', () => {
   assert.ok(g.sx0 >= 0 && g.sx0 + g.srcW <= 3000 + 1, 'source columns in bounds');
   assert.ok(g.srcW >= g.crop[2], 'source columns cover the frame');
   assert.equal(g.fullShort, 2000);
-  // GPU limit: output (incl. border) must fit
+  // GPU limit: output must fit
   const small = planExport(3000, 2000, { maxTexture: 2048, maxRenderbuffer: 2048, maxViewport: [2048, 2048] }, L, reach);
   assert.ok(small.outW <= 2048 && small.outH <= 2048 && small.srcW <= 2048);
   assert.ok(Math.abs(small.outW / small.outH - L.out[0] / L.out[1]) < 0.01);
@@ -316,17 +305,14 @@ test('Lomography cameras: ids, group, capabilities', () => {
   for (const g of FLASH_GELS.slice(1)) assert.ok(g.rgb.length === 3 && Math.max(...g.rgb) === 1);
 });
 
-test('frameLayout: sprocket exposure, pano minimum, rounded mask (with and without border)', () => {
+test('frameLayout: sprocket exposure, pano minimum, rounded mask', () => {
   const film = { id: 'kodak-portra-800', brand: 'Kodak', name: 'Portra 800', process: 'C-41', params: {} };
   let f = frameLayout(4032, 3024, { camera: getCamera('lomo-sprocket-rocket'), film, crop: true });
   assert.ok(Math.abs(f.crop[2] / f.crop[3] - 2.06) < 1e-6);
   assert.equal(f.mask, 'sprocket');
-  assert.equal(typeof f.draw, 'function', 'sprockets are on the picture: drawn without a border');
+  assert.equal(typeof f.draw, 'function', 'sprockets are on the picture');
   assert.deepEqual(f.inner, [0, 0]);
   assert.deepEqual(f.out, [f.crop[2], f.crop[3]]);
-  f = frameLayout(4032, 3024, { camera: getCamera('lomo-sprocket-rocket'), film, crop: true, border: true });
-  assert.equal(f.style, 'sprocket');
-  assert.ok(f.inner[1] > 0 && f.inner[1] < 0.05 * f.crop[3], 'thin scanner margin only');
   // Spinner: an ordinary photo is cut to 4.3:1, a phone panorama keeps its aspect
   f = frameLayout(4032, 3024, { camera: getCamera('lomo-spinner-360'), film, crop: true });
   assert.ok(Math.abs(f.crop[2] / f.crop[3] - 4.3) < 1e-6);
@@ -338,8 +324,7 @@ test('frameLayout: sprocket exposure, pano minimum, rounded mask (with and witho
   f = frameLayout(3000, 3000, { camera: getCamera('lomo-diana-f-plus'), film, crop: true });
   assert.equal(f.mask, 'rounded');
   assert.equal(typeof f.draw, 'function');
-  f = frameLayout(3000, 3000, { camera: getCamera('lomo-lc-a-120'), film, crop: true, border: true });
-  assert.equal(f.style, '120');
+  f = frameLayout(3000, 3000, { camera: getCamera('lomo-lc-a-120'), film, crop: true });
   assert.equal(f.mask, 'rounded');
   // ordinary cameras: unchanged
   f = frameLayout(3000, 2000, { camera: getCamera('leica-m6'), film, crop: true });
@@ -407,7 +392,7 @@ test('remapStripSource: aligned, in bounds, downsampled only where the remap min
   const lim = { maxTexture: 16384, maxRenderbuffer: 16384, maxViewport: [16384, 16384] };
   for (const id of ['lomo-actionsampler', 'lomo-fisheye-no2', 'lomo-supersampler']) {
     const cam = getCamera(id);
-    const L = frameLayout(W, H, { camera: cam, crop: true, border: true, film: { id: 'x', name: 'X' } });
+    const L = frameLayout(W, H, { camera: cam, crop: true, film: { id: 'x', name: 'X' } });
     const G = planExport(W, H, lim, L, 0);
     const RG = remapGeometry(cam, G.img, G.crop, 3);
     for (let y0 = 0; y0 < G.outH; y0 += 512) {
