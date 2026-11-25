@@ -2,6 +2,8 @@
 // Contract: docs/LOOKS.md. Pure data + helpers; storage helpers touch localStorage only when
 // called (Node-safe to import).
 
+import { defaultCurves, defaultHsl, HSL_BANDS } from './image-ops.js';
+
 export const LOOKS_KEY = 'c41.looks';
 export const CUSTOM_MAX = 24;
 export const THUMB_MAX_BYTES = 8192;
@@ -10,7 +12,12 @@ export const THUMB_MAX_BYTES = 8192;
 export const LOOK_EFFECT_DEFAULTS = {
   grain: 1, halation: 1, flare: 1, leak: 0, leakStyle: 'warm', dust: 0, flash: false,
 };
-export const LOOK_ADJUST_DEFAULTS = { exposure: 0, contrast: 0, warmth: 0, tint: 0 };
+export const LOOK_ADJUST_DEFAULTS = {
+  exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, fade: 0,
+  warmth: 0, tint: 0, vibrance: 0, saturation: 0,
+  clarity: 0, sharpen: 0, dehaze: 0, denoise: 0, vignette: 0,
+  splitShadowHue: 220, splitShadowAmt: 0, splitHighlightHue: 45, splitHighlightAmt: 0, splitBalance: 0,
+};
 
 export const LOOKS = [
   {
@@ -121,7 +128,18 @@ export function lookPatch(look) {
     grain: num(e.grain, 1), halation: num(e.halation, 1), flare: num(e.flare, 1),
     leak: num(e.leak, 0), leakStyle: typeof e.leakStyle === 'string' ? e.leakStyle : 'warm',
     dust: num(e.dust, 0), flashOn: !!e.flash,
-    exposure: num(a.exposure, 0), contrast: num(a.contrast, 0), warmth: num(a.warmth, 0), tint: num(a.tint, 0),
+    exposure: num(a.exposure, 0), contrast: num(a.contrast, 0),
+    highlights: num(a.highlights, 0), shadows: num(a.shadows, 0),
+    whites: num(a.whites, 0), blacks: num(a.blacks, 0), fade: num(a.fade, 0),
+    warmth: num(a.warmth, 0), tint: num(a.tint, 0),
+    vibrance: num(a.vibrance, 0), saturation: num(a.saturation, 0),
+    clarity: num(a.clarity, 0), sharpen: num(a.sharpen, 0),
+    dehaze: num(a.dehaze, 0), denoise: num(a.denoise, 0), vignette: num(a.vignette, 0),
+    splitShadowHue: num(a.splitShadowHue, 220), splitShadowAmt: num(a.splitShadowAmt, 0),
+    splitHighlightHue: num(a.splitHighlightHue, 45), splitHighlightAmt: num(a.splitHighlightAmt, 0),
+    splitBalance: num(a.splitBalance, 0),
+    curves: isObj(a.curves) ? clone(a.curves) : defaultCurves(),
+    hsl: isObj(a.hsl) ? { ...defaultHsl(), ...clone(a.hsl) } : defaultHsl(),
   };
   if (look.effects && Number.isFinite(look.effects.leakSeed)) p.leakSeed = look.effects.leakSeed;
   if (look.effects && Number.isFinite(look.effects.dustSeed)) p.dustSeed = look.effects.dustSeed;
@@ -135,7 +153,10 @@ export function isLookModified(look, state) {
   const p = lookPatch(look);
   for (const [k, v] of Object.entries(p)) {
     const s = state[k];
-    if (k === 'lookFilm') { if (hashJson(s || null) !== hashJson(v || null)) return true; continue; }
+    if (k === 'lookFilm' || k === 'curves' || k === 'hsl') {
+      if (hashJson(s || null) !== hashJson(v || null)) return true;
+      continue;
+    }
     if (typeof v === 'number') { if (typeof s !== 'number' || Math.abs(s - v) > 0.004) return true; continue; }
     if (s !== v) return true;
   }

@@ -394,7 +394,7 @@ const ROLL = {
   sprocket: { across: 35, side: 1.1, end: 2.2, filmEdge: 0 },
 };
 
-export function frameLayout(W, H, { camera = null, film = null, crop = false, border = false, seed = 1 } = {}) {
+export function frameLayout(W, H, { camera = null, film = null, crop = false, border = false, seed = 1, aspectOverride = null } = {}) {
   W = Math.max(1, W); H = Math.max(1, H);
   const inst = instantType(film);
   const land = W >= H;
@@ -404,8 +404,16 @@ export function frameLayout(W, H, { camera = null, film = null, crop = false, bo
     const own = Math.max(W, H) / Math.min(W, H);
     if (own < camera.minAspect) aspect = camera.minAspect;
   }
+  let doCrop = crop;
+  if (aspectOverride === 0) {
+    aspect = null;
+    doCrop = false;
+  } else if (typeof aspectOverride === 'number' && aspectOverride > 0) {
+    aspect = aspectOverride;
+    doCrop = true;
+  }
   let cr = [0, 0, W, H];
-  if (crop && aspect) {
+  if (doCrop && aspect) {
     const a = land ? aspect : 1 / aspect;
     let cw = W, ch = W / a;
     if (ch > H) { ch = H; cw = H * a; }

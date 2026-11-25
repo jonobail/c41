@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>C41</title>
-  <meta name="description" content="C41 — film emulation photo editor. Classic colour, black-and-white, slide and cinema stocks, vintage camera lenses, grain, halation, light leaks and date stamps. Works offline.">
-  <meta name="theme-color" content="#0b0a09">
+  <title>C41 — Darkroom &amp; Digital Film Lab</title>
+  <meta name="description" content="C41 — pro darkroom &amp; film emulation photo studio. 51 calibrated film stocks, vintage cameras, tone curves, 8-band HSL, split toning, bilateral denoise, live scopes &amp; full-res export. Works offline.">
+  <meta name="theme-color" content="#080706">
   <meta name="color-scheme" content="dark">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -23,27 +23,77 @@
 <body>
   <div id="app" class="app is-empty">
     <header class="topbar">
-      <button class="icon-btn" id="btn-import" type="button" aria-label="Open photo"></button>
-      <div class="topbar-title" aria-live="polite">
-        <span class="brandmark" role="img" aria-label="C41"><img class="brandmark-logo" src="icons/logo-small.svg" alt="" width="28" height="28"></span>
+      <div class="topbar-left">
+        <button class="icon-btn" id="btn-import" type="button" aria-label="Open photo" title="Open photo"></button>
+        <div class="topbar-title" aria-live="polite">
+          <span class="brandmark" role="img" aria-label="C41">
+            <img class="brandmark-logo" src="icons/logo-small.svg" alt="" width="26" height="26">
+            <span class="brandmark-word">C41</span>
+          </span>
+          <button class="active-pill" id="title-pill" type="button" hidden title="Film stock details">
+            <span class="active-dot" id="title-dot"></span>
+            <span class="active-name" id="title-film">Portra 400</span>
+          </button>
+        </div>
       </div>
-      <button class="icon-btn" id="btn-compare" type="button" aria-label="Split compare" aria-pressed="false"></button>
-      <button class="btn btn-accent" id="btn-save" type="button" disabled>Save</button>
+
+      <div class="topbar-tools">
+        <div class="tool-group">
+          <button class="icon-btn" id="btn-undo" type="button" aria-label="Undo" title="Undo (Ctrl+Z)" disabled></button>
+          <button class="icon-btn" id="btn-redo" type="button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled></button>
+        </div>
+        <div class="tool-group">
+          <button class="icon-btn" id="btn-auto" type="button" aria-label="Auto Develop" title="Smart Auto-Develop (A)" disabled></button>
+          <button class="icon-btn" id="btn-scope" type="button" aria-label="Toggle live scopes" title="Live Scopes (H)" aria-pressed="true" disabled></button>
+          <button class="icon-btn" id="btn-clip" type="button" aria-label="Toggle clipping warnings" title="Highlight/Shadow Clipping (J)" aria-pressed="false" disabled></button>
+          <button class="icon-btn" id="btn-compare" type="button" aria-label="Split compare" title="Split Compare (C)" aria-pressed="false" disabled></button>
+        </div>
+        <button class="btn btn-accent btn-export" id="btn-save" type="button" disabled>Export</button>
+      </div>
     </header>
 
     <main class="stage" id="stage">
+      <div class="stage-ambient" aria-hidden="true"></div>
       <canvas id="view" class="view" aria-label="Photo preview"></canvas>
+      <div class="straighten-grid" id="straighten-grid" hidden aria-hidden="true">
+        <i></i><i></i><i></i><i></i>
+        <span class="grid-horizon"></span>
+      </div>
       <div class="badge-original" id="badge-original" hidden>ORIGINAL</div>
       <div class="split-handle" id="split-handle" hidden aria-hidden="true"><span class="split-knob"></span></div>
+
+      <div class="stage-hud" id="stage-hud" hidden>
+        <div class="hud-left" id="scope-slot"></div>
+        <div class="hud-right">
+          <button class="hud-pill" id="btn-zoom" type="button" aria-label="Zoom level" title="Toggle zoom (0 / 1)">Fit</button>
+          <button class="hud-pill hud-icon-pill" id="btn-keys" type="button" aria-label="Keyboard shortcuts" title="Shortcuts (?)">?</button>
+        </div>
+      </div>
+
       <div class="stage-busy" id="stage-busy" hidden><span class="spinner"></span></div>
 
       <section class="empty" id="empty">
-        <img class="empty-logo" src="icons/logo.svg" alt="" width="132" height="132" aria-hidden="true">
-        <h1 class="empty-title">Load a frame</h1>
-        <p class="empty-sub">Develop your photo on classic stock. Nothing leaves your device.</p>
-        <div class="empty-actions">
-          <button class="btn btn-accent btn-lg" id="btn-choose" type="button">Choose photo</button>
-          <button class="btn btn-ghost btn-lg" id="btn-take" type="button">Take photo</button>
+        <div class="empty-card">
+          <div class="empty-emblem">
+            <img class="empty-logo" src="icons/logo.svg" alt="" width="112" height="112" aria-hidden="true">
+          </div>
+          <span class="empty-kicker">ANALOG FILM &amp; DIGITAL IMAGE LAB</span>
+          <h1 class="empty-title">Develop a frame</h1>
+          <p class="empty-sub">Calibrated film stocks, pro tone curves, 8-band HSL, bilateral denoise &amp; live scopes — 100% on-device GPU.</p>
+          <div class="empty-badges" aria-hidden="true">
+            <span class="empty-badge">51 Film Stocks</span>
+            <span class="empty-badge">31 Cameras</span>
+            <span class="empty-badge">Curves · HSL</span>
+            <span class="empty-badge">48 MP Export</span>
+          </div>
+          <div class="empty-actions">
+            <button class="btn btn-accent btn-lg" id="btn-choose" type="button">Choose photo</button>
+            <div class="empty-actions-row">
+              <button class="btn btn-ghost" id="btn-sample" type="button">Try sample photo</button>
+              <button class="btn btn-ghost" id="btn-take" type="button">Take photo</button>
+            </div>
+          </div>
+          <p class="empty-drop-hint">or drag &amp; drop any JPEG, PNG, WebP or HEIC here</p>
         </div>
       </section>
 
@@ -54,19 +104,30 @@
     </main>
 
     <section class="panel" id="panel">
+      <button class="panel-handle" id="btn-panel-expand" type="button" aria-label="Expand or collapse inspector" aria-expanded="false"><span></span></button>
       <nav class="tabs" role="tablist" aria-label="Edit sections">
-        <button class="tab" role="tab" id="tab-looks" aria-controls="pane-looks" aria-selected="true" data-tab="looks">Looks</button>
-        <button class="tab" role="tab" id="tab-film" aria-controls="pane-film" aria-selected="false" data-tab="film">Film</button>
-        <button class="tab" role="tab" id="tab-camera" aria-controls="pane-camera" aria-selected="false" data-tab="camera">Camera</button>
-        <button class="tab" role="tab" id="tab-effects" aria-controls="pane-effects" aria-selected="false" data-tab="effects">Effects</button>
-        <button class="tab" role="tab" id="tab-adjust" aria-controls="pane-adjust" aria-selected="false" data-tab="adjust">Adjust</button>
+        <button class="tab" role="tab" id="tab-looks" aria-controls="pane-looks" aria-selected="true" data-tab="looks">
+          <span class="tab-ico" data-ico="looks"></span><span class="tab-lbl">Looks</span>
+        </button>
+        <button class="tab" role="tab" id="tab-film" aria-controls="pane-film" aria-selected="false" data-tab="film">
+          <span class="tab-ico" data-ico="film"></span><span class="tab-lbl">Film</span>
+        </button>
+        <button class="tab" role="tab" id="tab-camera" aria-controls="pane-camera" aria-selected="false" data-tab="camera">
+          <span class="tab-ico" data-ico="camera"></span><span class="tab-lbl">Camera</span>
+        </button>
+        <button class="tab" role="tab" id="tab-adjust" aria-controls="pane-adjust" aria-selected="false" data-tab="adjust">
+          <span class="tab-ico" data-ico="sliders"></span><span class="tab-lbl">Develop</span>
+        </button>
+        <button class="tab" role="tab" id="tab-effects" aria-controls="pane-effects" aria-selected="false" data-tab="effects">
+          <span class="tab-ico" data-ico="sparkle"></span><span class="tab-lbl">Effects</span>
+        </button>
       </nav>
       <div class="panes">
         <div class="pane" role="tabpanel" id="pane-looks" aria-labelledby="tab-looks" data-pane="looks"></div>
         <div class="pane" role="tabpanel" id="pane-film" aria-labelledby="tab-film" data-pane="film" hidden></div>
         <div class="pane" role="tabpanel" id="pane-camera" aria-labelledby="tab-camera" data-pane="camera" hidden></div>
-        <div class="pane" role="tabpanel" id="pane-effects" aria-labelledby="tab-effects" data-pane="effects" hidden></div>
         <div class="pane" role="tabpanel" id="pane-adjust" aria-labelledby="tab-adjust" data-pane="adjust" hidden></div>
+        <div class="pane" role="tabpanel" id="pane-effects" aria-labelledby="tab-effects" data-pane="effects" hidden></div>
       </div>
     </section>
   </div>

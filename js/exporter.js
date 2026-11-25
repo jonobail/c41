@@ -26,6 +26,7 @@
 // (its buffer is detached) — the renderer must return a fresh array per call.
 
 import { lensReach, remapGeometry, remapSourceRect } from './renderer.js';
+import { buildGeometry, geoSourceRect } from './image-ops.js';
 
 export const PAD = 64;
 const STRIP_PIXELS = 4_000_000;
@@ -107,19 +108,33 @@ export async function exportJpeg({
   renderer, image, params, quality = 92, exifDate = null,
   onProgress = () => {}, signal, proxy = null, previewFrame = null,
   stripPixels = STRIP_PIXELS,          // test hook: force small strips to check seams
+  maxEdge = 0,                         // optional output long-edge cap (0 = full resolution)
 }) {
   if (signal?.aborted) throw abortError();
   const W = image.naturalWidth || image.videoWidth || image.width;
   const H = image.naturalHeight || image.videoHeight || image.height;
   if (!(W > 0 && H > 0)) throw new Error('export: image has no size');
 
+  const geoFull = buildGeometry(W, H, params || {});
+  const [LW, LH] = geoFull.logImg;
   const layout = params && params.layout && params.layout.crop ? params.layout : null;
-  const crop0 = layout ? layout.crop : [0, 0, W, H];
-  const reach = lensReach(params && params.camera, params && params.camAmt, crop0[2], crop0[3]);
+  const crop0 = layout ? layout.crop : [0, 0, LW, LH];
+  const reach = lensReach(params && params.camera, params && params.camAmt, crop0[2], crop0[3], params);
   const camera = params && params.camera;
   const remap = !!(camera && (camera.grid || camera.fisheye));
-  // remapped lenses don't use the column band (reach is applied per strip in remapStripSource)
-  const G = planExport(W, H, renderer.limits, layout, remap ? 0 : reach, stripPixels);
+  const useCustomSrc = remap || geoFull.active;
+  const limits = maxEdge > 0
+    ? {
+      maxTexture: Math.min(renderer.limits?.maxTexture || maxEdge, maxEdge),
+      maxRenderbuffer: Math.min(renderer.limits?.maxRenderbuffer || maxEdge, maxEdge),
+      maxViewport: [
+        Math.min(renderer.limits?.maxViewport?.[0] || maxEdge, maxEdge),
+        Math.min(renderer.limits?.maxViewport?.[1] || maxEdge, maxEdge),
+      ],
+    }
+    : renderer.limits;
+  // remapped / geometrically transformed lenses compute exact per-strip source rects
+  const G = planExport(LW, LH, limits, layout, useCustomSrc ? 0 : reach, stripPixels);
   const { s, outW, outH, stripH, pad, scale, fullShort } = G;
   const canvasH = stripH + 2 * pad;
   const drawFrame = layout && typeof layout.draw === 'function' ? layout.draw : null;
@@ -165,10 +180,12 @@ export async function exportJpeg({
     const lim = renderer.limits || {};
     const maxDim = Math.min(...[lim.maxTexture, lim.maxRenderbuffer].filter((v) => Number.isFinite(v) && v > 0), 16384);
     const RG = remap ? remapGeometry(camera, G.img, G.crop, params.seed ?? 1) : null;
-    const reachR = remap ? Math.ceil(reach * s) : 0;
+    const rawImg = geoFull.active ? [W * s, H * s] : G.img;
+    const geoRender = geoFull.active ? buildGeometry(rawImg[0], rawImg[1], params || {}) : null;
+    const reachR = useCustomSrc ? Math.ceil(reach * s) : 0;
     canvas = document.createElement('canvas');
-    canvas.width = remap ? 1 : G.srcW;
-    canvas.height = remap ? 1 : canvasH;
+    canvas.width = useCustomSrc ? 1 : G.srcW;
+    canvas.height = useCustomSrc ? 1 : canvasH;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('export: 2D canvas unavailable');
     ctx.imageSmoothingEnabled = true;
@@ -183,17 +200,18 @@ export async function exportJpeg({
       renderer.setFrame?.(null);
     }
 
-    renderer.setParams({ ...params, split: -1, showOriginal: false, fullShort });
+    renderer.setParams({ ...params, split: -1, showOriginal: false, clipWarn: false, fullShort });
     onProgress(0);
 
     const imgH = Math.round(G.img[1]);
+    const rawW = Math.round(rawImg[0]), rawH = Math.round(rawImg[1]);
     for (let y0 = 0; y0 < outH; y0 += stripH) {
       while (inFlight >= MAX_IN_FLIGHT) await race(new Promise((r) => { wake = r; }));
       if (signal?.aborted) throw abortError();
 
       const hs = Math.min(stripH, outH - y0);
       let srcOrigin, srcSize, texK = 1;
-      if (RG) {
+      if (RG && !geoRender) {
         const R = remapStripSource(G, RG, y0, hs, reachR, maxDim);
         const cw = Math.max(1, Math.round(R.w * R.texK)), chh = Math.max(1, Math.round(R.h * R.texK));
         if (canvas.width !== cw || canvas.height !== chh) { canvas.width = cw; canvas.height = chh; }
@@ -204,6 +222,39 @@ export async function exportJpeg({
         const sw = Math.min(W - sx, R.w / s), sh = Math.min(H - sy, R.h / s);
         if (sw > 0 && sh > 0) ctx.drawImage(image, sx, sy, sw, sh, 0, 0, cw, chh);
         srcOrigin = [R.x, R.y]; srcSize = [R.w, R.h]; texK = cw / R.w;
+      } else if (geoRender) {
+        // Logical image rect needed for this strip, mapped through inverse geometry to raw image px
+        let logRect, jMin = 1;
+        if (RG) {
+          const fr = [-PAD, y0 - G.inner[1] - PAD, G.crop[2] + PAD, y0 + hs - G.inner[1] + PAD];
+          const rr = remapSourceRect(RG, fr, reachR);
+          logRect = rr ? rr.rect : [0, 0, G.img[0], G.img[1]];
+          jMin = rr ? rr.jMin : 1;
+        } else {
+          logRect = [
+            G.crop[0] - PAD - reachR,
+            y0 - G.inner[1] + G.crop[1] - PAD - reachR,
+            G.crop[0] + G.crop[2] + PAD + reachR,
+            y0 + hs - G.inner[1] + G.crop[1] + PAD + reachR,
+          ];
+        }
+        let [x0, y0r, x1, y1] = geoSourceRect(geoRender, logRect, 2);
+        x0 = Math.max(0, Math.floor((x0 - PAD) / ALIGN) * ALIGN);
+        y0r = Math.max(0, Math.floor((y0r - PAD) / ALIGN) * ALIGN);
+        x1 = Math.min(rawW, Math.ceil((x1 + PAD) / ALIGN) * ALIGN);
+        y1 = Math.min(rawH, Math.ceil((y1 + PAD) / ALIGN) * ALIGN);
+        const rw = Math.max(1, x1 - x0), rh = Math.max(1, y1 - y0r);
+        let tk = Math.min(1, Math.pow(2, -Math.floor(Math.log2(Math.max(1, jMin)))));
+        while (tk > 1 / 64 && (rw * rh * tk * tk > REMAP_SRC_PIXELS || Math.max(rw, rh) * tk > maxDim)) tk /= 2;
+        const cw = Math.max(1, Math.round(rw * tk)), chh = Math.max(1, Math.round(rh * tk));
+        if (canvas.width !== cw || canvas.height !== chh) { canvas.width = cw; canvas.height = chh; }
+        else ctx.clearRect(0, 0, cw, chh);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        const sx = x0 / s, sy = y0r / s;
+        const sw = Math.min(W - sx, rw / s), sh = Math.min(H - sy, rh / s);
+        if (sw > 0 && sh > 0) ctx.drawImage(image, sx, sy, sw, sh, 0, 0, cw, chh);
+        srcOrigin = [x0, y0r]; srcSize = [rw, rh]; texK = cw / rw;
       } else {
         // canvas row 0 in whole-image render px (frame row = output row − inner, image = frame + crop)
         const top = Math.floor(y0 - G.inner[1] + G.crop[1]) - pad;
@@ -229,7 +280,7 @@ export async function exportJpeg({
       }
 
       const px = renderer.renderRegion({
-        srcOrigin, srcSize, full: G.img,
+        srcOrigin, srcSize, full: rawImg,
         crop: G.crop, inner: G.inner, outFull: [outW, outH],
         outOrigin: [0, y0], outSize: [outW, hs], scale, texK,
       });

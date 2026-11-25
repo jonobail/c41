@@ -24,6 +24,26 @@ export const ICONS = {
   more: S('<circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"/>'),
   trash: S('<path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/><path d="M10 11v5.5M14 11v5.5"/>'),
   sparkle: S('<path d="M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6-5.6-1.9 5.6-1.9z"/>'),
+  undo: S('<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
+  redo: S('<path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>'),
+  histogram: S('<path d="M3 19.5h18"/><path d="M4.5 19.5V15c2 0 3-8.5 5-8.5s2.5 5 4.5 5 2.5-3.5 4.5-3.5v11.5" fill="currentColor" fill-opacity=".2"/>'),
+  clipping: S('<path d="M12 4L3.5 19h17L12 4z"/><path d="M12 10v4.2"/><circle cx="12" cy="16.6" r=".6" fill="currentColor"/>'),
+  rotateL: S('<path d="M7.5 8.5A6.5 6.5 0 1 1 6 14"/><path d="M7.5 4.5v4h4"/>'),
+  rotateR: S('<path d="M16.5 8.5A6.5 6.5 0 1 0 18 14"/><path d="M16.5 4.5v4h-4"/>'),
+  flipH: S('<path d="M12 4v16" stroke-dasharray="2 2"/><path d="M8.5 7.5L4 12l4.5 4.5z"/><path d="M15.5 7.5L20 12l-4.5 4.5z"/>'),
+  flipV: S('<path d="M4 12h16" stroke-dasharray="2 2"/><path d="M7.5 8.5L12 4l4.5 4.5z"/><path d="M7.5 15.5L12 20l4.5-4.5z"/>'),
+  crop: S('<path d="M6.5 3.5v14h14"/><path d="M3.5 6.5h14v14"/>'),
+  sun: S('<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M3 12h2M19 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+  curve: S('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 19C9 19 10 5 20 5"/><circle cx="10.5" cy="12" r="1.6" fill="currentColor"/>'),
+  palette: S('<circle cx="12" cy="12" r="8.5"/><circle cx="9.2" cy="9.5" r="1.1" fill="currentColor"/><circle cx="14.2" cy="8.5" r="1.1" fill="currentColor"/><circle cx="16.2" cy="12.5" r="1.1" fill="currentColor"/><circle cx="8.5" cy="14" r="1.1" fill="currentColor"/>'),
+  detail: S('<path d="M12 3l8 15H4L12 3z"/><path d="M12 9.5l3.5 6.5h-7L12 9.5z"/>'),
+  search: S('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>'),
+  bookmark: S('<path d="M6.5 4.5h11a1 1 0 0 1 1 1V20l-6.5-4-6.5 4V5.5a1 1 0 0 1 1-1z"/>'),
+  keyboard: S('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M10.5 10h.01M14 10h.01M17 10h.01M7 14h10"/>'),
+  looks: S('<rect x="3.5" y="4.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="4.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>'),
+  zoomIn: S('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M11 8v6M8 11h6"/>'),
+  zoomOut: S('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M8 11h6"/>'),
+  expand: S('<path d="M6 14l6-6 6 6"/>'),
   // Camera bodies — used on camera cards (wider viewBox for nicer proportions)
   'body-slr': S('<path d="M6 13h36a3 3 0 0 1 3 3v15a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V16a3 3 0 0 1 3-3z"/><path d="M16 13l3.5-6h9L32 13"/><circle cx="24" cy="23.5" r="7"/><circle cx="24" cy="23.5" r="3.6"/><path d="M7 10h5"/><rect x="36" y="16" width="5" height="3" rx="1"/>', '0 0 48 40'),
   'body-rangefinder': S('<rect x="3" y="11" width="42" height="22" rx="3"/><circle cx="20" cy="22" r="7.5"/><circle cx="20" cy="22" r="4"/><rect x="34" y="14.5" width="7" height="4.5" rx="1"/><rect x="5.5" y="14.5" width="5" height="3.5" rx="1"/><path d="M33 8h7"/>', '0 0 48 40'),
@@ -97,14 +117,18 @@ export class Slider {
     this.fill = h('div', { class: 'slider-fill' });
     this.thumb = h('div', { class: 'slider-thumb' });
     const ticks = h('div', { class: 'slider-ticks', 'aria-hidden': 'true' });
+    const rail = h('div', {
+      class: 'slider-rail' + (opts.railClass ? ` ${opts.railClass}` : ''),
+      style: opts.gradient ? { background: opts.gradient } : null,
+    }, this.fill);
     this.track = h('div', {
-      class: 'slider-track' + (this.bipolar ? ' is-bipolar' : ''),
+      class: 'slider-track' + (this.bipolar ? ' is-bipolar' : '') + (opts.gradient ? ' has-gradient' : ''),
       role: 'slider',
       tabindex: '0',
       'aria-label': opts.label || '',
       'aria-valuemin': String(this.min),
       'aria-valuemax': String(this.max),
-    }, h('div', { class: 'slider-rail' }, this.fill), ticks, this.thumb);
+    }, rail, ticks, this.thumb);
     if (this.bipolar) ticks.append(h('i', { class: 'tick-centre' }));
     this.el = h('div', { class: 'slider' }, this.head, this.track);
 

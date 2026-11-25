@@ -2,6 +2,7 @@
 // No DOM access at import time (safe to import in Node).
 
 import { LUT_HEADROOM, FILM_DEFAULTS, srgbToLinear, linearToSrgb, floatToHalf } from './film-transform.js';
+import { buildGeometry, geoSourceRect, hueToRgb, hasActiveHsl, packHslUniforms } from './image-ops.js';
 
 export const PAD = 64; // full-image px of neighbourhood sampling the shader may need
 
@@ -18,13 +19,13 @@ precision highp int;
 precision highp sampler2D;
 precision highp sampler3D;
 
-uniform sampler2D uSrc, uHmap, uBmap, uDustTex, uDateTex, uFrameTex;
+uniform sampler2D uSrc, uHmap, uBmap, uDustTex, uDateTex, uFrameTex, uCurveTex;
 uniform sampler3D uLut;
 
 // Geometry (all in render px). "frame" = the camera's picture area (crop of the image);
 // "output" = frame + optional border. p = frame coords, o = output coords.
-uniform vec2 uImg;         // whole source image size
-uniform vec2 uCropOff;     // frame origin inside the image
+uniform vec2 uImg;         // whole RAW source image size
+uniform vec2 uCropOff;     // frame origin inside the logical image
 uniform vec2 uFull;        // frame size
 uniform vec2 uInner;       // frame origin inside the output
 uniform vec2 uOutFull;     // whole output size
@@ -33,6 +34,10 @@ uniform float uFlip;
 uniform float uScale;      // render px per full-res px
 uniform float uRefShort;   // frame short edge in render px
 uniform float uLutN, uHeadroom;
+// Digital geometry transform (rotate 90/180/270, flip H/V, straighten)
+uniform float uGeoOn;
+uniform vec4 uGeoMat;      // [m0, m1, m2, m3] logical -> raw
+uniform vec2 uGeoOff;      // [ox, oy] logical -> raw
 
 uniform float uSharp, uSoft, uClarity, uCornerSoft, uSweet, uBlurShape, uMaxR, uDist, uCA, uMaxCA;
 uniform float uVig, uVigHard, uVigWob, uVigSat;
@@ -43,6 +48,18 @@ uniform vec3 uHalCol;
 uniform float uHal, uBloom;
 uniform vec3 uFlare;       // x, y (frame-normalised), strength (final)
 uniform float uFilmAmt, uContrast;
+// Digital Image Processing controls
+uniform vec4 uTone;        // highlights, shadows, whites, blacks
+uniform vec4 uColorDip;    // vibrance, userSat, fade, userVig
+uniform float uDehaze, uDenoise;
+uniform float uCurveOn;
+uniform float uHslOn;
+uniform vec3 uHsl[8];      // [hueDeg, satDelta, lumDelta] for 8 photographic bands
+uniform vec4 uSplitSh;     // rgb, amt
+uniform vec4 uSplitHi;     // rgb, amt
+uniform float uSplitBal;
+uniform float uClipWarn;   // >0.5 highlights blown/crushed pixels (preview only)
+
 uniform vec3 uGrain;       // amplitude, cell size (target px), colour mix
 uniform uint uSeed;
 uniform int uLeakN;
@@ -105,19 +122,64 @@ vec2 fishMap(vec2 q) {
   float rho = min(r / uFish.x, 0.999);
   return uFishS.xy + dir * (fishE(dir, rho) * tan(rho * uFish.y) / uFish.z);
 }
+vec2 geoToRaw(vec2 q) {
+  if (uGeoOn < 0.5) return q;
+  return vec2(uGeoMat.x * q.x + uGeoMat.y * q.y, uGeoMat.z * q.x + uGeoMat.w * q.y) + uGeoOff;
+}
 vec2 lensToImg(vec2 q) {
   if (uMode == 1) return gMapB + q * gMapM;
   if (uMode == 2) return fishMap(q);
   return q + uCropOff;
 }
 vec3 srcImg(vec2 qi) {
-  qi = clamp(qi, vec2(0.5), uImg - 0.5);
-  return textureLod(uSrc, (qi - uSrcOrigin) / uSrcSize, gLod).rgb;
+  vec2 raw = clamp(geoToRaw(qi), vec2(0.5), uImg - 0.5);
+  return textureLod(uSrc, (raw - uSrcOrigin) / uSrcSize, gLod).rgb;
 }
 vec3 srcAt(vec2 p) { return srcImg(lensToImg(p)); }
 // lens tap with lateral CA (red magnified, blue shrunk)
 vec3 tapCA(vec2 q, vec2 off) {
   return vec3(srcAt(q + off).r, srcAt(q).g, srcAt(q - off).b);
+}
+
+vec3 rgbToHsv(vec3 c) {
+  float mx = max(c.r, max(c.g, c.b));
+  float mn = min(c.r, min(c.g, c.b));
+  float d = mx - mn;
+  float h = 0.0;
+  if (d > 1e-5) {
+    if (mx == c.r) h = mod((c.g - c.b) / d, 6.0);
+    else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
+    else h = (c.r - c.g) / d + 4.0;
+    h *= 60.0;
+    if (h < 0.0) h += 360.0;
+  }
+  float s = mx > 1e-5 ? d / mx : 0.0;
+  return vec3(h, s, mx);
+}
+
+vec3 hsvToRgb(vec3 hsv) {
+  float h = mod(hsv.x, 360.0) / 60.0;
+  float s = clamp(hsv.y, 0.0, 1.0);
+  float v = max(hsv.z, 0.0);
+  float c = v * s;
+  float x = c * (1.0 - abs(mod(h, 2.0) - 1.0));
+  vec3 rgb;
+  if (h < 1.0) rgb = vec3(c, x, 0.0);
+  else if (h < 2.0) rgb = vec3(x, c, 0.0);
+  else if (h < 3.0) rgb = vec3(0.0, c, x);
+  else if (h < 4.0) rgb = vec3(0.0, x, c);
+  else if (h < 5.0) rgb = vec3(x, 0.0, c);
+  else rgb = vec3(c, 0.0, x);
+  return rgb + vec3(v - c);
+}
+
+// Smooth raised-cosine weight for 8-band HSL mixer
+float hueBandWeight(float h, float center, float leftW, float rightW) {
+  float d = mod(h - center + 540.0, 360.0) - 180.0;
+  float w = d < 0.0 ? leftW : rightW;
+  float ad = abs(d);
+  if (ad >= w) return 0.0;
+  return 0.5 * (1.0 + cos(3.14159265 * ad / w));
 }
 
 vec3 toLin(vec3 c) {
@@ -210,18 +272,40 @@ vec3 develop(vec2 p) {
     col = mix(col, acc / 17.0, smoothstep(0.4, 1.5, rad));
   }
 
-  // ---- micro-contrast (unsharp mask) — fades where the corners go soft ----
+  // ---- edge-preserving bilateral denoise ----
+  if (uDenoise > 0.001) {
+    float br = clamp(uDenoise * refShort * 0.0022, 0.75, min(9.0, refShort * 0.0032));
+    float sigR = 0.04 + 0.14 * uDenoise;
+    float inv2SigR2 = 0.5 / (sigR * sigR);
+    vec3 bAcc = col;
+    float wSum = 1.0;
+    for (int i = 0; i < 12; i++) {
+      float fi = float(i) + 0.5;
+      float rr = sqrt(fi / 12.0) * br;
+      float a = fi * 2.3999632;
+      vec3 s = srcAt(q + vec2(cos(a), sin(a)) * rr);
+      vec3 df = s - col;
+      float w = exp(-dot(df, df) * inv2SigR2) * (1.0 - 0.35 * (fi / 12.0));
+      bAcc += s * w;
+      wSum += w;
+    }
+    col = mix(col, bAcc / wSum, clamp(uDenoise * 1.15, 0.0, 1.0));
+  }
+
+  // ---- micro-contrast (unsharp mask) + clarity + dehaze — sharp fades where corners go soft ----
   float sh = uSharp * (1.0 - edge * min(1.0, uCornerSoft * 2.0));
-  if (sh > 0.0 || uClarity != 0.0) {
+  if (sh > 0.0 || uClarity != 0.0 || uDehaze != 0.0) {
     float r1 = max(0.75, refShort * 0.0008);
     float r2 = refShort * 0.006;
-    vec3 m1 = vec3(0.0), m2 = vec3(0.0);
+    float r3 = refShort * 0.014;
+    vec3 m1 = vec3(0.0), m2 = vec3(0.0), m3 = vec3(0.0);
     for (int i = 0; i < 8; i++) {
       float a = float(i) * 0.7853982;
       vec2 dir = vec2(cos(a), sin(a));
       vec2 dir2 = vec2(cos(a + 0.3926991), sin(a + 0.3926991));
       if (sh > 0.0) m1 += srcAt(q + dir * r1);
       if (uClarity != 0.0) m2 += srcAt(q + dir2 * r2) + srcAt(q + dir * r2 * 0.5);
+      if (uDehaze != 0.0) m3 += srcAt(q + dir * r3);
     }
     if (sh > 0.0) col += (col - m1 / 8.0) * sh * 1.6;
     if (uClarity != 0.0) {
@@ -230,6 +314,23 @@ vec3 develop(vec2 p) {
       float L = dot(col, LUMA);
       float w = uClarity > 0.0 ? 0.35 + 0.65 * clamp(4.0 * L * (1.0 - L), 0.0, 1.0) : 1.0;
       col += (col - m2) * uClarity * w;
+    }
+    if (uDehaze != 0.0) {
+      m3 /= 8.0;
+      // dark-channel atmospheric veil approximation
+      float veil = min(m3.r, min(m3.g, m3.b));
+      if (uDehaze > 0.0) {
+        float t = clamp(1.0 - uDehaze * 0.62 * veil, 0.35, 1.0);
+        vec3 air = vec3(0.92, 0.95, 1.0);
+        col = (col - air * (1.0 - t) * 0.68) / t;
+        // subtle saturation restore matching real optical dehaze
+        float Yd = dot(max(col, 0.0), LUMA);
+        col = mix(vec3(Yd), col, 1.0 + uDehaze * 0.16);
+      } else {
+        float mist = -uDehaze * 0.45;
+        vec3 air = mix(m3, vec3(0.88, 0.90, 0.94), 0.5);
+        col = mix(col, air, mist * (0.35 + 0.65 * (1.0 - dot(col, LUMA))));
+      }
     }
     col = max(col, 0.0);
   }
@@ -253,6 +354,12 @@ vec3 develop(vec2 p) {
   }
   float vst = min(uVig * pow(max(vd, 0.0), uVigHard), 9.0);
   lin *= exp2(-vst);
+
+  // user digital vignette (-1 darkens edges .. +1 brightens edges)
+  if (uColorDip.w != 0.0) {
+    float uv = pow(clamp(d, 0.0, 1.35), 2.2) * uColorDip.w * 1.85;
+    lin *= exp2(clamp(uv, -4.5, 2.5));
+  }
 
   // point-and-shoot flash: hot centre, fast fall-off, unlit background drops away
   if (uFlash > 0.0) {
@@ -284,7 +391,7 @@ vec3 develop(vec2 p) {
   lin += uVeil * 0.25 * uExpo;
 
   // halation + bloom (maps cover the whole image)
-  vec2 nImg = clamp(lensToImg(q), vec2(0.0), uImg) / uImg;
+  vec2 nImg = clamp(geoToRaw(lensToImg(q)), vec2(0.0), uImg) / uImg;
   vec4 h = texture(uHmap, nImg);
   // halation is light scattered back from the film base: it shows as a glow AROUND highlights,
   // so suppress it inside the (already saturated) highlight itself
@@ -330,6 +437,41 @@ vec3 develop(vec2 p) {
   vec3 lut = texture(uLut, u * ((uLutN - 1.0) / uLutN) + 0.5 / uLutN).rgb;
   vec3 c = clamp(mix(base, lut, uFilmAmt), 0.0, 1.0); // uFilmAmt > 1 exaggerates the stock
 
+  // ---- digital pro tone: highlights, shadows, whites, blacks ----
+  if (uTone.x != 0.0 || uTone.y != 0.0 || uTone.z != 0.0 || uTone.w != 0.0) {
+    float L = clamp(dot(c, LUMA), 0.0, 1.0);
+    if (uTone.y != 0.0) {
+      float sw = pow(1.0 - L, 2.05);
+      c = uTone.y > 0.0
+        ? c + (1.0 - c) * (uTone.y * 0.42 * sw)
+        : c * (1.0 + uTone.y * 0.62 * sw);
+    }
+    if (uTone.x != 0.0) {
+      L = clamp(dot(c, LUMA), 0.0, 1.0);
+      float hw = pow(L, 1.95);
+      c = uTone.x > 0.0
+        ? c + (1.0 - c) * (uTone.x * 0.42 * hw)
+        : c - c * (-uTone.x * 0.46 * hw);
+    }
+    if (uTone.z != 0.0 || uTone.w != 0.0) {
+      float blk = -uTone.w * 0.14;
+      float wht = 1.0 - uTone.z * 0.18;
+      c = (c - blk) / max(0.08, wht - blk);
+    }
+    c = clamp(c, 0.0, 1.0);
+  }
+
+  // ---- 4-channel interactive tone curve (R, G, B then Master RGB) ----
+  if (uCurveOn > 0.5) {
+    const float k0 = 0.5 / 256.0, k1 = 255.0 / 256.0;
+    c.r = texture(uCurveTex, vec2(k0 + clamp(c.r, 0.0, 1.0) * k1, 0.5)).r;
+    c.g = texture(uCurveTex, vec2(k0 + clamp(c.g, 0.0, 1.0) * k1, 0.5)).g;
+    c.b = texture(uCurveTex, vec2(k0 + clamp(c.b, 0.0, 1.0) * k1, 0.5)).b;
+    c.r = texture(uCurveTex, vec2(k0 + clamp(c.r, 0.0, 1.0) * k1, 0.5)).a;
+    c.g = texture(uCurveTex, vec2(k0 + clamp(c.g, 0.0, 1.0) * k1, 0.5)).a;
+    c.b = texture(uCurveTex, vec2(k0 + clamp(c.b, 0.0, 1.0) * k1, 0.5)).a;
+  }
+
   // camera colour signature: saturation (+ boost that follows the vignette)
   float sat = uSat + uVigSat * (1.0 - exp2(-vst));
   if (sat != 0.0) {
@@ -337,10 +479,71 @@ vec3 develop(vec2 p) {
     c = clamp(mix(vec3(Y), c, 1.0 + sat), 0.0, 1.0);
   }
 
+  // ---- digital vibrance (skin-protected) + global saturation ----
+  if (uColorDip.x != 0.0 || uColorDip.y != 0.0) {
+    float mx = max(c.r, max(c.g, c.b));
+    float mn = min(c.r, min(c.g, c.b));
+    float Y = dot(c, LUMA);
+    float s = mx > 1e-4 ? (mx - mn) / mx : 0.0;
+    float skinW = smoothstep(0.0, 0.35, c.r - c.b) * smoothstep(0.0, 0.25, c.g - c.b * 0.8);
+    float vibScale = uColorDip.x * (1.0 - s * 0.75) * (1.0 - 0.42 * skinW);
+    float totSat = clamp(1.0 + uColorDip.y + vibScale, 0.0, 2.5);
+    c = clamp(mix(vec3(Y), c, totSat), 0.0, 1.0);
+  }
+
+  // ---- 8-band HSL colour mixer (luma-safe, neutral-protected) ----
+  if (uHslOn > 0.5) {
+    vec3 hsv = rgbToHsv(c);
+    float chr = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+    float nw = smoothstep(0.015, 0.085, chr);
+    if (nw > 0.0) {
+      float H = hsv.x;
+      float w0 = hueBandWeight(H, 0.0, 60.0, 30.0);
+      float w1 = hueBandWeight(H, 30.0, 30.0, 30.0);
+      float w2 = hueBandWeight(H, 60.0, 30.0, 60.0);
+      float w3 = hueBandWeight(H, 120.0, 60.0, 60.0);
+      float w4 = hueBandWeight(H, 180.0, 60.0, 60.0);
+      float w5 = hueBandWeight(H, 240.0, 60.0, 30.0);
+      float w6 = hueBandWeight(H, 270.0, 30.0, 30.0);
+      float w7 = hueBandWeight(H, 300.0, 30.0, 60.0);
+      vec3 dHsl = w0 * uHsl[0] + w1 * uHsl[1] + w2 * uHsl[2] + w3 * uHsl[3]
+                + w4 * uHsl[4] + w5 * uHsl[5] + w6 * uHsl[6] + w7 * uHsl[7];
+      dHsl *= nw;
+      if (abs(dHsl.x) > 0.01 || abs(dHsl.y) > 0.001 || abs(dHsl.z) > 0.001) {
+        float y0 = dot(c, LUMA);
+        hsv.x = mod(hsv.x + dHsl.x + 360.0, 360.0);
+        hsv.y = clamp(hsv.y * (1.0 + dHsl.y), 0.0, 1.0);
+        vec3 cr = hsvToRgb(hsv);
+        float y1 = dot(cr, LUMA);
+        float targetY = clamp(y0 * (1.0 + dHsl.z * (0.4 + 0.6 * hsv.y)), 0.0, 1.0);
+        if (y1 > 1e-4) cr *= targetY / y1;
+        else cr = vec3(targetY);
+        c = clamp(cr, 0.0, 1.0);
+      }
+    }
+  }
+
+  // ---- split toning (luma-balanced shadows & highlights colour grading) ----
+  if (uSplitSh.w > 0.001 || uSplitHi.w > 0.001) {
+    float Y = clamp(dot(c, LUMA), 0.0, 1.0);
+    float piv = clamp(0.5 - uSplitBal * 0.32, 0.14, 0.86);
+    float sw = smoothstep(piv + 0.28, 0.0, Y) * smoothstep(0.0, 0.06, Y + 0.02);
+    float hw = smoothstep(piv - 0.28, 1.0, Y) * smoothstep(1.0, 0.94, Y - 0.02);
+    vec3 shChr = uSplitSh.rgb - vec3(dot(uSplitSh.rgb, LUMA));
+    vec3 hiChr = uSplitHi.rgb - vec3(dot(uSplitHi.rgb, LUMA));
+    c += shChr * (sw * uSplitSh.w * 0.36) + hiChr * (hw * uSplitHi.w * 0.36);
+    c = clamp(c, 0.0, 1.0);
+  }
+
   // post contrast (user + lens + flash)
   if (uContrast != 0.0) {
     vec3 cc = clamp(c, 0.0, 1.0);
     c = cc + uContrast * (cc * cc * (3.0 - 2.0 * cc) - cc);
+  }
+
+  // matte black fade lift
+  if (uColorDip.z > 0.001) {
+    c = mix(vec3(uColorDip.z * 0.22), vec3(1.0), clamp(c, 0.0, 1.0));
   }
   return c;
 }
@@ -446,6 +649,17 @@ void main() {
     }
   }
 
+  // ---- clipping warnings (preview only: blown highlights = red/amber zebra, crushed shadows = blue) ----
+  if (uClipWarn > 0.5 && onPic > 0.5) {
+    float stripe = step(0.5, fract((fc.x + fc.y) * 0.125));
+    float mx = max(c.r, max(c.g, c.b));
+    if (mx >= 0.992) {
+      c = mix(vec3(1.0, 0.24, 0.16), vec3(1.0, 0.78, 0.22), stripe);
+    } else if (mx <= 0.008) {
+      c = mix(vec3(0.14, 0.42, 1.0), vec3(0.05, 0.18, 0.65), stripe);
+    }
+  }
+
   // ---- dither ----
   float dz = float(pcg(uint(o.x) * 7919u ^ pcg(uint(o.y) + 0x9e3779b9u))) / 4294967295.0 - 0.5;
   outColor = vec4(c + dz / 255.0, 1.0);
@@ -486,19 +700,23 @@ function identityLut(N) {
 }
 
 const UNIFORMS = [
-  'uSrc', 'uHmap', 'uBmap', 'uDustTex', 'uDateTex', 'uFrameTex', 'uLut',
+  'uSrc', 'uHmap', 'uBmap', 'uDustTex', 'uDateTex', 'uFrameTex', 'uCurveTex', 'uLut',
   'uImg', 'uCropOff', 'uFull', 'uInner', 'uOutFull',
   'uSrcOrigin', 'uSrcSize', 'uOutOrigin', 'uOutSize', 'uFlip', 'uScale', 'uRefShort',
+  'uGeoOn', 'uGeoMat', 'uGeoOff',
   'uLutN', 'uHeadroom', 'uSharp', 'uSoft', 'uClarity', 'uCornerSoft', 'uSweet', 'uBlurShape', 'uMaxR',
   'uDist', 'uCA', 'uMaxCA', 'uVig', 'uVigHard', 'uVigWob', 'uVigSat', 'uVigOff',
   'uWB', 'uExpo', 'uVeil', 'uSat', 'uFlash',
-  'uHalCol', 'uHal', 'uBloom', 'uFlare', 'uFilmAmt', 'uContrast', 'uGrain', 'uSeed',
+  'uHalCol', 'uHal', 'uBloom', 'uFlare', 'uFilmAmt', 'uContrast',
+  'uTone', 'uColorDip', 'uDehaze', 'uDenoise', 'uCurveOn', 'uHslOn', 'uHsl',
+  'uSplitSh', 'uSplitHi', 'uSplitBal', 'uClipWarn',
+  'uGrain', 'uSeed',
   'uLeakN', 'uLeakGeo', 'uLeakCol', 'uDust', 'uDateOn', 'uDateRect',
   'uFrameOn', 'uFrameFilm', 'uFrameOrigin', 'uFrameSize', 'uSplit', 'uShowOrig',
   'uMode', 'uGridN', 'uCellA', 'uCellB', 'uGap', 'uFish', 'uFishS', 'uTexK', 'uVigAxis', 'uBand', 'uGel', 'uSwirl',
 ];
 // texture units
-const U_SRC = 0, U_LUT = 1, U_HMAP = 2, U_BMAP = 3, U_DUST = 4, U_DATE = 5, U_FRAME = 6;
+const U_SRC = 0, U_LUT = 1, U_HMAP = 2, U_BMAP = 3, U_DUST = 4, U_DATE = 5, U_FRAME = 6, U_CURVE = 7;
 
 const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
 const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -696,10 +914,10 @@ export function remapSourceRect(G, rect, reach = 0) {
 }
 
 /**
- * How far (in the same units as frameW/frameH) the lens stage may sample away from a pixel:
- * distortion + CA + blur kernel / clarity ring. The exporter adds this to PAD for strips.
+ * How far (in the same units as frameW/frameH) the lens + spatial DSP stage may sample away
+ * from a pixel: distortion + CA + blur / clarity / dehaze / denoise.
  */
-export function lensReach(camera, camAmt, frameW, frameH) {
+export function lensReach(camera, camAmt, frameW, frameH, extra = null) {
   // multi-lens grid: the lens works per cell (the exporter scales this by the cell magnification)
   const gr = camera && camera.grid;
   if (gr) {
@@ -712,8 +930,13 @@ export function lensReach(camera, camAmt, frameW, frameH) {
   const dist = Math.abs(L.dist) * 0.4 * hd;
   const ca = Math.min(L.ca * 0.0025 * hd, MAX_CA_K * short);
   const blur = Math.min((L.soft + L.cornerSoft) * BLUR_K, MAX_R_K) * short * 2.5;
-  const clar = L.clarity !== 0 ? CLARITY_K * short : 0;
-  return Math.ceil(dist + ca + Math.max(blur, clar));
+  const userClar = extra ? num(extra.clarity, 0) : 0;
+  const userDehaze = extra ? num(extra.dehaze, 0) : 0;
+  const userDenoise = extra ? num(extra.denoise, 0) : 0;
+  const clar = (L.clarity + userClar) !== 0 ? CLARITY_K * short : 0;
+  const dh = userDehaze !== 0 ? 0.014 * short : 0;
+  const dn = userDenoise > 0.001 ? Math.min(9, 0.0032 * short) : 0;
+  return Math.ceil(dist + ca + Math.max(blur, clar, dh, dn));
 }
 
 export class Renderer {
@@ -763,11 +986,12 @@ export class Renderer {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
       return t;
     };
-    this.tex = { src: black(), hmap: black(), bmap: black(), dust: black(), date: black(), frame: black(), lut: null };
+    this.tex = { src: black(), hmap: black(), bmap: black(), dust: black(), date: black(), frame: black(), curve: black(), lut: null };
     this.frameGeo = null;
     this.srcSize = [1, 1];
     this.dateRect = [0, 0, 0, 0];
     this.hasDate = false;
+    this.hasCurve = false;
     this.lutN = 2;
     this.setLut(identityLut(17), 17);
     this.fbo = null; this.fboTex = null; this.fboSize = [0, 0];
@@ -877,6 +1101,22 @@ export class Renderer {
     }
   }
 
+  /** 1D tone curve LUT: 256×1 RGBA8 Uint8Array (R, G, B channel curves + A master RGB curve), or null. */
+  setCurveLut(rgba, size = 256) {
+    const gl = this.gl;
+    if (this.lost) return;
+    gl.bindTexture(gl.TEXTURE_2D, this.tex.curve);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    if (rgba && rgba.length >= size * 4) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, size, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+      this.hasCurve = true;
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+      this.hasCurve = false;
+    }
+  }
+
   setParams(p) {
     this.params = p || {};
   }
@@ -888,14 +1128,17 @@ export class Renderer {
 
   _previewGeo() {
     const [w, h] = this.srcSize;
+    const geo = buildGeometry(w, h, this.params);
+    const [lw, lh] = geo.logImg;
     const L = this.params.layout;
     if (!L || !L.full) {
-      return { img: [w, h], crop: [0, 0, w, h], inner: [0, 0], outFull: [w, h], k: 1 };
+      return { img: [w, h], logImg: [lw, lh], crop: [0, 0, lw, lh], inner: [0, 0], outFull: [lw, lh], k: 1 };
     }
-    const kx = w / L.full[0], ky = h / L.full[1];
+    const kx = lw / L.full[0], ky = lh / L.full[1];
     const k = kx;
     return {
       img: [w, h],
+      logImg: [lw, lh],
       crop: [L.crop[0] * kx, L.crop[1] * ky, L.crop[2] * kx, L.crop[3] * ky],
       inner: [L.inner[0] * k, L.inner[1] * k],
       outFull: [Math.max(1, Math.round(L.out[0] * k)), Math.max(1, Math.round(L.out[1] * k))],
@@ -976,6 +1219,12 @@ export class Renderer {
     bind(U_DUST, gl.TEXTURE_2D, this.tex.dust, u.uDustTex);
     bind(U_DATE, gl.TEXTURE_2D, this.tex.date, u.uDateTex);
     bind(U_FRAME, gl.TEXTURE_2D, this.tex.frame, u.uFrameTex);
+    bind(U_CURVE, gl.TEXTURE_2D, this.tex.curve, u.uCurveTex);
+
+    const geoXform = buildGeometry(g.img[0], g.img[1], P);
+    gl.uniform1f(u.uGeoOn, geoXform.active ? 1 : 0);
+    gl.uniform4f(u.uGeoMat, geoXform.mat[0], geoXform.mat[1], geoXform.mat[2], geoXform.mat[3]);
+    gl.uniform2f(u.uGeoOff, geoXform.off[0], geoXform.off[1]);
 
     gl.uniform2f(u.uImg, g.img[0], g.img[1]);
     gl.uniform2f(u.uCropOff, g.crop[0], g.crop[1]);
@@ -992,10 +1241,10 @@ export class Renderer {
     gl.uniform1f(u.uLutN, this.lutN);
     gl.uniform1f(u.uHeadroom, LUT_HEADROOM);
 
-    // lens
-    gl.uniform1f(u.uSharp, Lu.sharp);
+    // lens + user spatial detail
+    gl.uniform1f(u.uSharp, clampN(Lu.sharp + Math.max(0, num(P.sharpen, 0)), 0, 1.8));
     gl.uniform1f(u.uSoft, Lu.soft);
-    gl.uniform1f(u.uClarity, Lu.clarity);
+    gl.uniform1f(u.uClarity, clampN(Lu.clarity + num(P.clarity, 0), -0.9, 1.0));
     gl.uniform1f(u.uCornerSoft, Lu.cornerSoft);
     gl.uniform1f(u.uSweet, Lu.sweet);
     gl.uniform1f(u.uBlurShape, Lu.blurShape);
@@ -1032,12 +1281,44 @@ export class Renderer {
     // flare (flarePoint is normalised to the whole image → convert to the frame)
     const fpnt = P.flarePoint || { x: 0.5, y: 0.3, strength: 0 };
     const fstr = Lu.flare * num(P.flare, 1) * (0.3 + 0.7 * num(fpnt.strength, 0));
-    const fx = (num(fpnt.x, 0.5) * g.img[0] - g.crop[0]) / g.crop[2];
-    const fy = (num(fpnt.y, 0.3) * g.img[1] - g.crop[1]) / g.crop[3];
+    const fx = (num(fpnt.x, 0.5) * geoXform.logImg[0] - g.crop[0]) / g.crop[2];
+    const fy = (num(fpnt.y, 0.3) * geoXform.logImg[1] - g.crop[1]) / g.crop[3];
     gl.uniform3f(u.uFlare, fx, fy, fstr);
 
     gl.uniform1f(u.uFilmAmt, filmAmt);
     gl.uniform1f(u.uContrast, num(P.contrast, 0) + Lu.contrast + 0.14 * flash);
+
+    // digital image processing uniforms
+    gl.uniform4f(
+      u.uTone,
+      clampN(num(P.highlights, 0), -1, 1),
+      clampN(num(P.shadows, 0), -1, 1),
+      clampN(num(P.whites, 0), -1, 1),
+      clampN(num(P.blacks, 0), -1, 1),
+    );
+    gl.uniform4f(
+      u.uColorDip,
+      clampN(num(P.vibrance, 0), -1, 1),
+      clampN(num(P.saturation, 0), -1, 1),
+      clampN(num(P.fade, 0), 0, 1),
+      clampN(num(P.vignette, 0), -1, 1),
+    );
+    gl.uniform1f(u.uDehaze, clampN(num(P.dehaze, 0), -1, 1));
+    gl.uniform1f(u.uDenoise, clampN(num(P.denoise, 0), 0, 1));
+    gl.uniform1f(u.uCurveOn, this.hasCurve && P.curveOn !== false ? 1 : 0);
+
+    const hslOn = hasActiveHsl(P.hsl);
+    gl.uniform1f(u.uHslOn, hslOn ? 1 : 0);
+    if (hslOn) gl.uniform3fv(u.uHsl, packHslUniforms(P.hsl));
+
+    const shAmt = clampN(num(P.splitShadowAmt, 0), 0, 1);
+    const hiAmt = clampN(num(P.splitHighlightAmt, 0), 0, 1);
+    const shRgb = hueToRgb(num(P.splitShadowHue, 220));
+    const hiRgb = hueToRgb(num(P.splitHighlightHue, 45));
+    gl.uniform4f(u.uSplitSh, shRgb[0], shRgb[1], shRgb[2], shAmt);
+    gl.uniform4f(u.uSplitHi, hiRgb[0], hiRgb[1], hiRgb[2], hiAmt);
+    gl.uniform1f(u.uSplitBal, clampN(num(P.splitBalance, 0), -1, 1));
+    gl.uniform1f(u.uClipWarn, P.clipWarn ? 1 : 0);
 
     // grain
     const gr = { ...FILM_DEFAULTS.grain, ...(fp.grain || {}) };
@@ -1077,7 +1358,7 @@ export class Renderer {
     gl.uniform2f(u.uFrameSize, fg ? Math.max(1, fg.size[0]) : 1, fg ? Math.max(1, fg.size[1]) : 1);
 
     // remapped lenses (grid / fisheye), axis vignette, slit banding, flash gel
-    const RG = remapGeometry(P.camera, g.img, g.crop, num(P.seed, 1));
+    const RG = remapGeometry(P.camera, geoXform.logImg, g.crop, num(P.seed, 1));
     gl.uniform1i(u.uMode, RG ? RG.mode : 0);
     gl.uniform1f(u.uTexK, num(g.texK, 1));
     if (RG && RG.mode === 1) {
