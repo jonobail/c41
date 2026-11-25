@@ -1,5 +1,5 @@
 // C41 — app shell: mobile-first thumb studio + desktop inspector, GPU Develop lab,
-// live scopes, undo/redo history, looks & full-resolution strip export.
+// live scopes, undo/redo history & full-resolution strip export.
 import { Slider, Sheet, toast, ChipGroup, Toggle, icon, h, idleLoop, debounce } from './ui.js';
 import {
   HSL_BANDS, ASPECT_PRESETS,
@@ -39,7 +39,6 @@ async function loadModules() {
     overlays: './overlays.js',
     exif: './exif.js',
     exporter: './exporter.js',
-    looks: './looks.js',
   };
   const keys = Object.keys(specs);
   const res = await Promise.allSettled(keys.map((k) => import(specs[k])));
@@ -77,11 +76,8 @@ function defaults() {
     camMasks: {},
     ...defaultDevelop(),
     seed: (Math.random() * 1e9) | 0,
-    lookId: null,
-    lookFilm: null,
   };
 }
-const NULLABLE = { lookId: 'string', lookFilm: 'object' };
 
 let state = null;
 const history = new HistoryStack(50);
@@ -94,7 +90,6 @@ function loadState() {
       const s = JSON.parse(raw);
       for (const k of Object.keys(d)) {
         if (s[k] === undefined) continue;
-        if (k in NULLABLE) { if (s[k] === null || typeof s[k] === NULLABLE[k]) d[k] = s[k]; continue; }
         if (k === 'curves' && s.curves && typeof s.curves === 'object') {
           d.curves = { ...defaultCurves(), ...s.curves };
           continue;
@@ -171,7 +166,6 @@ const S = {
   exifDate: null,
   lutCache: new Map(), lutFilmId: null,
   curveKey: '',
-  effFilm: null, effKey: '',
   dust: null, dustKey: '',
   date: null, dateKey: '',
   leaks: [], leaksSeed: null,
@@ -179,7 +173,7 @@ const S = {
   layout: null, layoutKey: '', frame: null,
   split: -1, holding: false, clipWarn: false,
   scopeOn: false,
-  activeTab: 'looks',
+  activeTab: 'film',
   activeDevSub: 'light',
   activeColorSub: 'wb',
   zoom: 1, panX: 0, panY: 0,
@@ -232,18 +226,8 @@ const ev = (v) => (Math.abs(v) < 0.005 ? '0.0' : `${v > 0 ? '+' : '−'}${Math.a
 const evFull = (v) => (Math.abs(v) < 0.005 ? '0.0 EV' : `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(2)} EV`);
 const fmtBytes = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 
-function filmKey() {
-  return state.lookFilm && M.looks ? `${state.filmId}#${M.looks.hashJson(state.lookFilm)}` : state.filmId;
-}
-function film() {
-  const key = filmKey();
-  if (S.effKey !== key || !S.effFilm) {
-    const base = M.films.getFilm(state.filmId);
-    S.effFilm = state.lookFilm && M.looks ? { ...base, params: M.looks.mergeFilmParams(base.params, state.lookFilm) } : base;
-    S.effKey = key;
-  }
-  return S.effFilm;
-}
+const filmKey = () => state.filmId;
+const film = () => M.films.getFilm(state.filmId);
 const camera = () => {
   const c = M.cameras.getCamera(state.cameraId);
   return M.cameras.effectiveCamera ? M.cameras.effectiveCamera(c, state.camMasks?.[c.id]) : c;
@@ -804,71 +788,6 @@ function buildThumbnails() {
     } catch { /* ignore */ }
     return i < ids.length;
   });
-  buildLookThumbs();
-}
-
-function buildLookThumbs() {
-  S.lookThumbCancel?.();
-  const lin = S.thumbLin;
-  if (!lin || !M.looks || !M.ft) return;
-  const queue = [...lookCards.keys()].filter((id) => id !== '__match' && id !== '__save');
-  for (const { canvas } of lookCards.values()) canvas?.classList.remove('is-ready');
-  let i = 0;
-  S.lookThumbCancel = idleLoop(() => {
-    if (i >= queue.length) return false;
-    const id = queue[i++];
-    const card = lookCards.get(id);
-    const look = M.looks.getLook(id, customLooks);
-    if (card && look) {
-      try { renderLookThumb(lin, look, card.canvas); card.canvas.classList.add('is-ready'); } catch { /* ignore */ }
-    }
-    return i < queue.length;
-  });
-}
-
-function renderLookThumb(lin, look, canvas) {
-  const P = M.looks.lookPatch(look);
-  const base = M.films.getFilm(P.filmId);
-  const fn = M.ft.makeFilm(P.lookFilm ? M.looks.mergeFilmParams(base.params, P.lookFilm) : base.params);
-  const cam = M.cameras.getCamera(P.cameraId);
-  const Lu = M.renderer?.lensUniforms ? M.renderer.lensUniforms(cam, P.camAmt) : { vig: 0, vigHard: 2, warmth: 0, tint: 0 };
-  const wt = 0.25 * P.warmth + (Lu.warmth || 0), tn = 0.2 * P.tint + (Lu.tint || 0);
-  let wr = (1 + wt) * (1 + tn * 0.5), wg = 1 - tn, wb = (1 - wt) * (1 + tn * 0.5);
-  const wl = 0.2126 * wr + 0.7152 * wg + 0.0722 * wb;
-  const ex = Math.pow(2, P.exposure);
-  wr = wr / wl * ex; wg = wg / wl * ex; wb = wb / wl * ex;
-  const leaks = P.leak > 0 && M.overlays ? M.overlays.makeLeaks(P.leakSeed ?? state.leakSeed, P.leakStyle === 'warm' ? null : { style: P.leakStyle }).slice(0, 4) : [];
-  const amt = P.filmAmt;
-  const id = new ImageData(THUMB, THUMB);
-  const d = id.data;
-  const out = new Float32Array(3);
-  const hd = Math.SQRT1_2;
-  for (let y = 0, p = 0, q = 0; y < THUMB; y++) {
-    for (let x = 0; x < THUMB; x++, p += 3, q += 4) {
-      const nx = (x + 0.5) / THUMB, ny = (y + 0.5) / THUMB;
-      let k = 1;
-      if (Lu.vig > 0) k = Math.pow(2, -Math.min(9, Lu.vig * Math.pow(Math.hypot(nx - 0.5, ny - 0.5) / hd, Lu.vigHard)));
-      const r = lin[p] * wr * k, g = lin[p + 1] * wg * k, b = lin[p + 2] * wb * k;
-      fn(r, g, b, out);
-      let R = out[0], G = out[1], B = out[2];
-      if (amt < 1) {
-        R = amt * R + (1 - amt) * M.ft.linearToSrgb(Math.min(1, r));
-        G = amt * G + (1 - amt) * M.ft.linearToSrgb(Math.min(1, g));
-        B = amt * B + (1 - amt) * M.ft.linearToSrgb(Math.min(1, b));
-      }
-      if (leaks.length) {
-        let lr = 0, lg = 0, lb = 0;
-        for (const l of leaks) {
-          const qx = nx - l.x, qy = (ny - l.y) / Math.max(0.01, l.stretch);
-          const v = Math.exp(-(qx * qx + qy * qy) / Math.max(1e-4, l.r * l.r));
-          lr += l.color[0] * v * P.leak; lg += l.color[1] * v * P.leak; lb += l.color[2] * v * P.leak;
-        }
-        R = 1 - (1 - R) * (1 - Math.min(1, lr)); G = 1 - (1 - G) * (1 - Math.min(1, lg)); B = 1 - (1 - B) * (1 - Math.min(1, lb));
-      }
-      d[q] = R * 255 + 0.5; d[q + 1] = G * 255 + 0.5; d[q + 2] = B * 255 + 0.5; d[q + 3] = 255;
-    }
-  }
-  canvas.getContext('2d').putImageData(id, 0, 0);
 }
 
 /* -------------------------------------------------------------- UI build */
@@ -966,170 +885,7 @@ function buildDialDeck({ items, defaultKey, extraStartPills = [], onSelect = nul
   return { el: deck, select };
 }
 
-/* ------------------------------------------------------------------- looks */
-
-const lookCards = new Map();
-let customLooks = [];
-
-function activeLook() {
-  return state.lookId && M.looks ? M.looks.getLook(state.lookId, customLooks) : null;
-}
-
-function buildLooksPane() {
-  const pane = document.querySelector('[data-pane="looks"]');
-  if (!pane || !M.looks) return;
-  customLooks = M.looks.loadCustomLooks();
-  const cards = h('div', { class: 'cards looks', role: 'radiogroup', 'aria-label': 'Looks' });
-  ctl.lookCards = cards;
-  ctl.lookInfo = h('div', { class: 'look-info', 'aria-live': 'polite' });
-  pane.append(h('div', { class: 'pane-label', text: 'Looks & Recipes' }), cards, ctl.lookInfo);
-  fillLookCards();
-}
-
-function openSaveRecipeSheet() {
-  if (!M.looks) return;
-  const defName = M.looks.nextLookName(customLooks);
-  const name = h('input', { class: 'text-input', type: 'text', value: defName, maxlength: '40', 'aria-label': 'Recipe name', enterkeyhint: 'done', autocomplete: 'off' });
-  const save = h('button', { class: 'btn btn-accent', type: 'button', html: `${icon('check')}<span>Save Recipe</span>` });
-  const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel' });
-  const f = film();
-  const sheet = new Sheet({
-    title: 'Save current recipe',
-    content: h('div', { class: 'match' },
-      h('p', { class: 'export-hint', style: { textAlign: 'left' }, text: `Saves ${f.name}, camera, effects, curves, HSL, and Develop edits as a reusable Look.` }),
-      h('label', { class: 'field' }, h('span', { class: 'field-label', text: 'Look Name' }), name),
-      h('div', { class: 'export-actions' }, cancel, save)),
-  });
-  const doSave = () => {
-    const adjust = {};
-    for (const k of ADJUST_KEYS) adjust[k] = state[k];
-    adjust.curves = JSON.parse(JSON.stringify(state.curves));
-    adjust.hsl = JSON.parse(JSON.stringify(state.hsl));
-    const look = {
-      id: `custom-${Date.now()}`,
-      name: (name.value || '').trim() || defName,
-      description: `Custom recipe based on ${f.name}.`,
-      custom: true,
-      filmId: state.filmId,
-      film: state.lookFilm ? JSON.parse(JSON.stringify(state.lookFilm)) : null,
-      filmAmt: state.filmAmt,
-      cameraId: state.cameraId,
-      camAmt: state.camAmt,
-      effects: {
-        grain: state.grain, halation: state.halation, flare: state.flare,
-        leak: state.leak, leakStyle: state.leakStyle, dust: state.dust, flash: state.flashOn,
-      },
-      adjust,
-      swatch: f.swatch?.slice(0, 2) || ['#f5a524', '#242429'],
-      created: Date.now(),
-    };
-    const saved = M.looks.saveCustomLook(look);
-    if (!saved) { toast('Couldn’t save look (storage full).', { tone: 'error' }); return; }
-    customLooks = M.looks.loadCustomLooks();
-    state.lookId = saved.id;
-    fillLookCards();
-    saveState();
-    sheet.close();
-    toast(`Saved “${saved.name}”`);
-  };
-  save.addEventListener('click', doSave);
-  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSave(); } });
-  cancel.addEventListener('click', () => sheet.close());
-  sheet.open();
-}
-
-function fillLookCards() {
-  const cards = ctl.lookCards;
-  if (!cards) return;
-  S.lookThumbCancel?.();
-  lookCards.clear();
-  cards.replaceChildren();
-
-  const match = h('button', { class: 'card look look-match', type: 'button', 'aria-label': 'Match a photo' },
-    h('span', { class: 'card-thumb', html: icon('wand') }),
-    h('span', { class: 'card-name', text: 'Match' }),
-    h('span', { class: 'card-sub', text: 'Reference' }));
-  match.addEventListener('click', () => { const inp = $('file-ref'); inp.value = ''; inp.click(); });
-  cards.append(match);
-
-  const saveCard = h('button', { class: 'card look look-save', type: 'button', 'aria-label': 'Save current edit as a look' },
-    h('span', { class: 'card-thumb', html: icon('bookmark') }),
-    h('span', { class: 'card-name', text: 'Save' }),
-    h('span', { class: 'card-sub', text: 'Recipe' }));
-  saveCard.addEventListener('click', openSaveRecipeSheet);
-  cards.append(saveCard);
-
-  const all = [...customLooks, ...M.looks.LOOKS];
-  for (const look of all) {
-    const sw = look.swatch && look.swatch.length ? look.swatch : ['#555', '#222'];
-    const canvas = mkCanvas(THUMB, THUMB);
-    const base = M.films.getFilm(look.filmId);
-    const btn = h('button', { class: 'card look', type: 'button', role: 'radio', dataset: { id: look.id }, 'aria-label': `Look: ${look.name}` },
-      h('span', { class: 'card-thumb' },
-        h('span', { class: 'swatch-fill', style: { background: `linear-gradient(150deg, ${sw.join(', ')})` } }),
-        look.thumb ? h('img', { class: 'look-ref', src: look.thumb, alt: '' }) : null,
-        canvas,
-        look.custom ? h('span', { class: 'card-iso', text: 'MINE' }) : null),
-      h('span', { class: 'card-name', text: look.name }),
-      h('span', { class: 'card-sub', text: look.custom ? 'Custom' : (base?.name || '') }));
-    const wrap = h('div', { class: 'card-wrap' }, btn);
-    let pressT = 0, longPressed = false;
-    btn.addEventListener('click', (e) => {
-      if (longPressed) { longPressed = false; e.preventDefault(); return; }
-      tapLook(look.id);
-    });
-    if (look.custom) {
-      const edit = h('button', { class: 'card-edit', type: 'button', 'aria-label': `Edit ${look.name}`, html: icon('more') });
-      edit.addEventListener('click', () => openLookEditor(look.id));
-      wrap.append(edit);
-      btn.addEventListener('contextmenu', (e) => e.preventDefault());
-      btn.addEventListener('pointerdown', (e) => {
-        if (e.button > 0) return;
-        longPressed = false;
-        const x0 = e.clientX, y0 = e.clientY;
-        clearTimeout(pressT);
-        pressT = setTimeout(() => { longPressed = true; navigator.vibrate?.(10); openLookEditor(look.id); }, 550);
-        const cancel = (ev) => {
-          if (ev.type === 'pointermove' && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 10) return;
-          clearTimeout(pressT);
-          btn.removeEventListener('pointermove', cancel);
-        };
-        btn.addEventListener('pointermove', cancel);
-        btn.addEventListener('pointerup', cancel, { once: true });
-        btn.addEventListener('pointercancel', cancel, { once: true });
-      });
-    }
-    lookCards.set(look.id, { el: btn, canvas });
-    cards.append(wrap);
-  }
-  markLook();
-  if (S.thumbLin) buildLookThumbs();
-}
-
-function tapLook(id) {
-  const look = M.looks.getLook(id, customLooks);
-  if (!look) return;
-  if (state.lookId === id) {
-    if (M.looks.isLookModified(look, state)) { applyLook(look); toast(`${look.name} restored`); }
-    return;
-  }
-  applyLook(look);
-}
-
-function applyLook(look) {
-  const p = M.looks.lookPatch(look);
-  if (M.films.getFilm(p.filmId)?.id !== p.filmId) p.filmId = M.films.DEFAULT_FILM_ID;
-  if (M.cameras.getCamera(p.cameraId)?.id !== p.cameraId) p.cameraId = M.cameras.DEFAULT_CAMERA_ID;
-  const dustChanged = p.dust !== state.dust || ('dustSeed' in p && p.dustSeed !== state.dustSeed);
-  Object.assign(state, p);
-  state.lookId = look.id;
-  syncControls();
-  saveState();
-  recordHistory();
-  if (dustChanged) rebuildDust();
-  requestRender();
-  scrollCardIntoView(ctl.lookCards, lookCards.get(look.id)?.el.parentElement);
-}
+/* -------------------------------------------------------------- sync & title */
 
 function syncControls() {
   markFilm(); markCamera();
@@ -1145,235 +901,15 @@ function syncControls() {
   ctl.syncDevBadges?.();
   ctl.syncDatePill?.();
   updateAllParamPills();
-  markLook();
 }
 
-function markLook() {
-  if (!M.looks) return;
-  const look = activeLook();
-  const modified = !!look && M.looks.isLookModified(look, state);
-  for (const [id, { el }] of lookCards) {
-    const on = id === state.lookId;
-    el.setAttribute('aria-checked', String(on));
-    el.classList.toggle('is-modified', on && modified);
-    const sub = el.querySelector('.card-sub');
-    if (sub) {
-      const lk = M.looks.getLook(id, customLooks);
-      sub.textContent = on && modified ? 'Edited' : (lk?.custom ? 'Custom' : (M.films.getFilm(lk?.filmId)?.name || ''));
-    }
-  }
-  if (ctl.lookInfo) {
-    if (look) {
-      ctl.lookInfo.replaceChildren(
-        h('strong', { text: look.name }),
-        h('span', { text: modified ? ' · edited (tap again to restore)' : ` — ${look.description || ''}` }));
-    } else {
-      ctl.lookInfo.replaceChildren(h('span', { text: 'One-tap film & colour recipes — or match any reference photo.' }));
-    }
-  }
-  updateTitle(look, modified);
-}
-
-function updateTitle(look = activeLook(), modified = look ? M.looks.isLookModified(look, state) : false) {
+function updateTitle() {
   const f = M.films.getFilm(state.filmId);
   const filmName = `${f.brand ? f.brand + ' ' : ''}${f.name}`;
   const el = $('title-film');
-  if (el) el.textContent = look ? `${look.name}${modified ? ' · edited' : ''}` : filmName;
+  if (el) el.textContent = filmName;
   const dot = $('title-dot');
   if (dot && f.swatch?.[0]) dot.style.background = f.swatch[0];
-}
-
-/* ------------------------------------------------------- match a photo */
-
-function refThumb(img, side = 72) {
-  const c = mkCanvas(side, side);
-  const g = c.getContext('2d', { willReadFrequently: true });
-  const W = img.naturalWidth, H = img.naturalHeight, s = Math.min(W, H);
-  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-  g.drawImage(img, (W - s) / 2, (H - s) / 2, s, s, 0, 0, side, side);
-  let url = '';
-  for (const q of [0.72, 0.6, 0.45]) {
-    url = c.toDataURL('image/jpeg', q);
-    if (url.length <= 8000) break;
-  }
-  const d = g.getImageData(0, 0, side, side).data;
-  const acc = [[0, 0, 0, 0], [0, 0, 0, 0]];
-  for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) {
-    const i = (y * side + x) * 4, a = acc[x < side / 2 ? 0 : 1];
-    a[0] += d[i]; a[1] += d[i + 1]; a[2] += d[i + 2]; a[3]++;
-  }
-  const hex = (a) => '#' + [0, 1, 2].map((k) => Math.round(a[k] / a[3]).toString(16).padStart(2, '0')).join('');
-  releaseCanvas(c);
-  return { thumb: url.length <= 11000 ? url : undefined, swatch: [hex(acc[0]), hex(acc[1])] };
-}
-
-function snapshotWith(patch, maxSide = 640) {
-  if (!S.renderer || !S.proxy || S.exporting) return null;
-  const saved = state;
-  let out = null;
-  try {
-    state = { ...state, ...patch };
-    ensureLut(); ensureCurveLut(); ensureLeaks();
-    S.renderer.setParams(buildParams({ split: -1, showOriginal: false, clipWarn: false }));
-    S.renderer.renderPreview();
-    const k = Math.min(1, maxSide / Math.max(view.width, view.height));
-    out = mkCanvas(Math.max(1, Math.round(view.width * k)), Math.max(1, Math.round(view.height * k)));
-    const g = out.getContext('2d');
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    g.drawImage(view, 0, 0, out.width, out.height);
-  } catch { out = null; } finally {
-    state = saved;
-    try {
-      ensureLut(); ensureCurveLut(); ensureLeaks();
-      S.renderer.setParams(buildParams());
-      S.renderer.renderPreview();
-    } catch { /* ignore */ }
-  }
-  return out;
-}
-
-async function startMatch(file) {
-  if (!file) return;
-  if (!M.looks) { toast('Looks aren’t available.', { tone: 'error' }); return; }
-  if (file.type && !file.type.startsWith('image/')) { toast('That file isn’t an image.', { tone: 'error' }); return; }
-  const ctrl = new AbortController();
-  const refUrl = URL.createObjectURL(file);
-  const refImg = h('img', { class: 'match-ref', src: refUrl, alt: 'Reference photo' });
-  const bar = h('div', { class: 'progress-bar' });
-  const pctEl = h('span', { text: '0%' });
-  const status = h('span', { text: 'Reading colour & tone…' });
-  const cancel = h('button', { class: 'btn btn-block', type: 'button', text: 'Cancel' });
-  const body = h('div', { class: 'match' },
-    h('div', { class: 'match-hero' }, refImg),
-    h('div', { class: 'export-progress' },
-      h('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Matching progress' }, bar),
-      h('div', { class: 'progress-meta' }, status, pctEl),
-      cancel));
-  let done = false;
-  const sheet = new Sheet({
-    title: 'Matching…', content: body, className: 'sheet-match',
-    onClose: () => { if (!done) ctrl.abort(); setTimeout(() => URL.revokeObjectURL(refUrl), 600); },
-  });
-  cancel.addEventListener('click', () => { ctrl.abort(); sheet.close(); });
-  sheet.open();
-
-  const fail = (msg) => { done = true; if (sheet.isOpen) sheet.close(); toast(msg, { tone: 'error', duration: 5000 }); };
-
-  let mod;
-  try {
-    mod = await import('./look-match.js');
-    if (typeof mod.matchLook !== 'function') throw new Error('matchLook missing');
-  } catch { fail('Photo matching isn’t available yet.'); return; }
-  if (ctrl.signal.aborted) return;
-
-  let res, img;
-  try {
-    const stages = [[0.25, 'Reading colour & tone…'], [0.6, 'Fitting the film curve…'], [0.95, 'Fine-tuning…'], [2, 'Almost there…']];
-    res = await mod.matchLook(file, {
-      signal: ctrl.signal,
-      onProgress: (p) => {
-        const v = Math.max(0, Math.min(1, +p || 0));
-        bar.style.width = `${(v * 100).toFixed(1)}%`;
-        pctEl.textContent = `${Math.round(v * 100)}%`;
-        status.textContent = stages.find(([t]) => v < t)[1];
-      },
-    });
-    img = await decodeImage(refUrl).catch(() => null);
-  } catch (e) {
-    if (ctrl.signal.aborted || e?.name === 'AbortError') {
-      done = true; if (sheet.isOpen) sheet.close(); toast('Match cancelled'); return;
-    }
-    fail(`Couldn’t match that photo${e?.message ? ` (${e.message})` : ''}.`);
-    return;
-  }
-  if (ctrl.signal.aborted || !sheet.isOpen) return;
-  if (!res || typeof res !== 'object' || !res.film) { fail('Couldn’t match that photo.'); return; }
-
-  const fp = { ...res.film };
-  if (res.grainParams && typeof res.grainParams === 'object') fp.grain = { ...(fp.grain || {}), ...res.grainParams };
-  const ref = img ? refThumb(img) : { thumb: undefined, swatch: ['#c9b8a8', '#6d625a'] };
-  const look = {
-    id: `custom-${Date.now()}`, name: M.looks.nextLookName(customLooks), description: 'Matched from a photo.', custom: true,
-    filmId: M.films.DEFAULT_FILM_ID, film: fp, filmAmt: 1, cameraId: 'none', camAmt: 1,
-    effects: { ...(res.effects || {}) }, adjust: {}, swatch: ref.swatch, thumb: ref.thumb, created: Date.now(),
-  };
-
-  const patch = { ...M.looks.lookPatch(look) };
-  const snap = snapshotWith(patch);
-  const after = snap
-    ? h('figure', { class: 'match-fig' }, snap, h('figcaption', { text: 'Your photo' }))
-    : h('figure', { class: 'match-fig is-empty' }, h('div', { class: 'match-placeholder', text: 'Open a photo to see this look on it.' }), h('figcaption', { text: 'Your photo' }));
-  const name = h('input', { class: 'text-input', type: 'text', value: look.name, maxlength: '40', 'aria-label': 'Look name', enterkeyhint: 'done', autocomplete: 'off' });
-  const save = h('button', { class: 'btn btn-accent', type: 'button', html: `${icon('check')}<span>Save look</span>` });
-  const discard = h('button', { class: 'btn', type: 'button', text: 'Discard' });
-  const result = h('div', { class: 'match' },
-    h('div', { class: 'match-compare' },
-      h('figure', { class: 'match-fig' }, h('img', { src: refUrl, alt: 'Reference photo' }), h('figcaption', { text: 'Reference' })),
-      after),
-    h('label', { class: 'field' }, h('span', { class: 'field-label', text: 'Name' }), name),
-    h('div', { class: 'export-actions' }, discard, save));
-  done = true;
-  sheet.setTitle('Matched look');
-  sheet.body.replaceChildren(result);
-
-  const doSave = () => {
-    look.name = (name.value || '').trim() || look.name;
-    const saved = M.looks.saveCustomLook(look);
-    if (!saved) { toast('Couldn’t save look.', { tone: 'error' }); return; }
-    customLooks = M.looks.loadCustomLooks();
-    fillLookCards();
-    applyLook(saved);
-    sheet.close();
-    toast(`Saved “${saved.name}”`);
-  };
-  save.addEventListener('click', doSave);
-  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); name.blur(); doSave(); } });
-  discard.addEventListener('click', () => sheet.close());
-}
-
-function openLookEditor(id) {
-  const look = M.looks.getLook(id, customLooks);
-  if (!look || !look.custom) return;
-  const name = h('input', { class: 'text-input', type: 'text', value: look.name, maxlength: '40', 'aria-label': 'Look name', enterkeyhint: 'done', autocomplete: 'off' });
-  const save = h('button', { class: 'btn btn-accent', type: 'button', text: 'Rename' });
-  const del = h('button', { class: 'btn btn-danger', type: 'button', html: `${icon('trash')}<span>Delete</span>` });
-  const sheet = new Sheet({
-    title: look.name,
-    content: h('div', { class: 'match' },
-      look.thumb ? h('div', { class: 'edit-head' }, h('img', { class: 'edit-thumb', src: look.thumb, alt: '' }), h('p', { class: 'export-hint', text: 'Matched from this photo.' })) : null,
-      h('label', { class: 'field' }, h('span', { class: 'field-label', text: 'Name' }), name),
-      h('div', { class: 'export-actions' }, del, save)),
-  });
-  const doRename = () => {
-    const n = (name.value || '').trim();
-    if (!n) { name.focus(); return; }
-    if (n !== look.name) {
-      if (!M.looks.saveCustomLook({ ...look, name: n })) { toast('Couldn’t save.', { tone: 'error' }); return; }
-      customLooks = M.looks.loadCustomLooks();
-      fillLookCards();
-      toast('Look renamed');
-    }
-    sheet.close();
-  };
-  save.addEventListener('click', doRename);
-  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doRename(); } });
-  let armed = 0;
-  del.addEventListener('click', () => {
-    if (!armed) {
-      del.classList.add('is-armed');
-      del.lastChild.textContent = 'Tap to confirm';
-      armed = setTimeout(() => { armed = 0; del.classList.remove('is-armed'); del.lastChild.textContent = 'Delete'; }, 3000);
-      return;
-    }
-    clearTimeout(armed);
-    M.looks.deleteCustomLook(id);
-    customLooks = M.looks.loadCustomLooks();
-    if (state.lookId === id) { state.lookId = null; saveState(); }
-    fillLookCards();
-    sheet.close();
-    toast(`Deleted “${look.name}”`);
-  });
-  sheet.open();
 }
 
 /* -------------------------------------------------------------------- film */
@@ -1479,11 +1015,9 @@ function markFilm() {
 }
 
 function selectFilm(id) {
-  if (state.filmId === id && !state.lookFilm) return;
+  if (state.filmId === id) return;
   state.filmId = id;
-  state.lookFilm = null;
   markFilm();
-  markLook();
   saveState();
   recordHistory();
   requestRender();
@@ -1535,7 +1069,7 @@ function buildCameraPane() {
   const tog = (key, label) => {
     ctl[key] = new Toggle({
       label, value: state[key],
-      onChange: (v) => { state[key] = v; saveState(); recordHistory(); markLook(); requestRender(); },
+      onChange: (v) => { state[key] = v; saveState(); recordHistory(); requestRender(); },
     });
     return ctl[key].el;
   };
@@ -1548,7 +1082,7 @@ function buildCameraPane() {
     onChange: (v) => {
       state.gel = v;
       if (v !== 'none' && !state.flashOn) { state.flashOn = true; ctl.flashOn?.set(true); }
-      saveState(); recordHistory(); markLook(); requestRender();
+      saveState(); recordHistory(); requestRender();
     },
   }) : null;
   ctl.gelRow = h('div', { class: 'cam-opts', hidden: true }, h('div', { class: 'opts-label', text: 'Gel' }), ctl.gel?.el);
@@ -1586,7 +1120,7 @@ function syncCameraOpts() {
       value: cur,
       onChange: (v) => {
         state.camMasks = { ...(state.camMasks || {}), [c.id]: v };
-        saveState(); recordHistory(); markLook(); requestRender();
+        saveState(); recordHistory(); requestRender();
       },
     });
     ctl.camMaskRow.replaceChildren(h('div', { class: 'opts-label', text: 'Format' }), ctl.camMask.el);
@@ -1607,7 +1141,6 @@ function selectCamera(id) {
   const want = id === 'none' ? null : camGroupOf(M.cameras.getCamera(id));
   if (ctl.camChips && want && ctl.camChips.value !== 'all' && ctl.camChips.value !== want) ctl.camChips.buttons.get('all')?.click();
   markCamera();
-  markLook();
   saveState();
   recordHistory();
   requestRender();
@@ -1686,7 +1219,6 @@ function buildAdjustPane() {
     onInput: (c) => {
       state.curves = c;
       saveState();
-      markLook();
       ctl.syncDevBadges?.();
       requestRender();
     },
@@ -1743,7 +1275,7 @@ function buildAdjustPane() {
   const setHslVal = (idx, v) => {
     if (!state.hsl[activeBand]) state.hsl[activeBand] = [0, 0, 0];
     state.hsl[activeBand][idx] = v;
-    saveState(); markLook(); syncHslDots(); ctl.syncDevBadges?.(); requestRender();
+    saveState(); syncHslDots(); ctl.syncDevBadges?.(); requestRender();
   };
   const hslHue = new Slider({ label: 'Hue', min: -30, max: 30, step: 1, value: 0, defaultValue: 0, bipolar: true, format: degDelta, onInput: (v) => setHslVal(0, v), onChange: () => recordHistory() });
   const hslSat = new Slider({ label: 'Saturation', min: -1, max: 1, step: 0.01, value: 0, defaultValue: 0, bipolar: true, format: signed, onInput: (v) => setHslVal(1, v), onChange: () => recordHistory() });
@@ -1801,7 +1333,7 @@ function buildAdjustPane() {
     hslDots.append(btn);
   }
   hslResetBtn.addEventListener('click', () => {
-    state.hsl = defaultHsl(); ctl.syncHslSliders(); saveState(); recordHistory(); markLook(); ctl.syncDevBadges?.(); requestRender();
+    state.hsl = defaultHsl(); ctl.syncHslSliders(); saveState(); recordHistory(); ctl.syncDevBadges?.(); requestRender();
   });
 
   const hslGroup = h('div', { class: 'color-group' },
@@ -1933,7 +1465,7 @@ function buildEffectsPane() {
       state[seedKey] = ((Math.random() * 1e9) | 0) + 1;
       if (seedKey === 'leakSeed' && state.leak === 0) { set('leak', 0.6); ctl.leak.set(0.6); }
       if (seedKey === 'dustSeed' && state.dust === 0) { set('dust', 0.5); ctl.dust.set(0.5); }
-      saveState(); recordHistory(); markLook();
+      saveState(); recordHistory();
       if (seedKey === 'dustSeed') rebuildDust();
       requestRender();
     });
@@ -1950,7 +1482,7 @@ function buildEffectsPane() {
     onChange: (v) => {
       state.leakStyle = v;
       if (state.leak === 0) { state.leak = 0.6; ctl.leak.set(0.6); }
-      saveState(); recordHistory(); markLook(); requestRender();
+      saveState(); recordHistory(); requestRender();
     },
   });
 
@@ -2024,7 +1556,6 @@ function set(key, v) {
   if (key === 'dust') rebuildDust();
   updateParamPill(key);
   ctl.syncDevBadges?.();
-  markLook();
   requestRender();
 }
 
@@ -2062,7 +1593,6 @@ function openMoreToolsSheet() {
     item('wand', 'Auto Develop', 'Tone & WB', runAutoDevelop),
     item('histogram', 'Live Scopes (RGB / Parade)', S.scopeOn ? 'ON' : 'OFF', toggleScopes, S.scopeOn ? 'is-on' : ''),
     item('clipping', 'Highlight & Shadow Clipping', S.clipWarn ? 'ON' : 'OFF', toggleClipping, S.clipWarn ? 'is-on' : ''),
-    item('bookmark', 'Save Current Edit as Look', 'Recipe', openSaveRecipeSheet),
     item('info', `About ${film().name}`, `ISO ${film().iso || '—'}`, openFilmInfo),
     item('reset', 'Reset All Edits', '', resetAll, 'is-danger'));
   sheet = new Sheet({ title: 'Studio Tools', content: body });
@@ -2124,11 +1654,6 @@ function openShortcutsSheet() {
 /* -------------------------------------------------------------------- tabs */
 
 function initTabs() {
-  if (!M.looks) {
-    document.querySelector('[data-tab="looks"]')?.remove();
-    document.querySelector('[data-pane="looks"]')?.remove();
-    document.querySelector('.tabs')?.classList.add('tabs-4');
-  }
   for (const el of document.querySelectorAll('.tab-ico[data-ico]')) {
     el.innerHTML = icon(el.dataset.ico);
   }
@@ -2146,7 +1671,7 @@ function initTabs() {
   };
   for (const t of tabs) t.addEventListener('click', () => show(t.dataset.tab));
   const saved = loadUi().tab;
-  show(tabs.some((t) => t.dataset.tab === saved) ? saved : (M.looks ? 'looks' : 'film'));
+  show(tabs.some((t) => t.dataset.tab === saved) ? saved : 'film');
 }
 
 /* ------------------------------------------------------- stage gestures & zoom */
@@ -2500,7 +2025,7 @@ const CAM = {
   live: null,
   renderer: null,
   raf: 0,
-  mode: 'film',        // 'film' | 'camera' | 'looks' | 'ev'
+  mode: 'film',        // 'film' | 'camera' | 'ev'
   timerSec: 0,         // 0 | 3 | 10
   gridOn: false,
   lutKey: '',
@@ -2659,23 +2184,6 @@ function camBuildStrip() {
       c.id !== 'none' ? h('span', { class: 'cam-chip-meta', text: c.badge || FORMAT_LABEL[c.format] || '' }) : null);
       b.addEventListener('click', () => {
         selectCamera(c.id);
-        CAM.layoutKey = '';
-        camBuildStrip();
-        camSyncTelemetry();
-      });
-      strip.append(b);
-    }
-  } else if (CAM.mode === 'looks' && M.looks) {
-    for (const lk of [...customLooks, ...M.looks.LOOKS]) {
-      const sw = lk.swatch?.[0] || '#f5a524';
-      const b = h('button', {
-        class: 'cam-chip', type: 'button', role: 'radio',
-        'aria-checked': String(lk.id === state.lookId),
-      },
-      h('i', { class: 'cam-chip-sw', style: { background: sw } }),
-      h('span', { text: lk.name }));
-      b.addEventListener('click', () => {
-        applyLook(lk);
         CAM.layoutKey = '';
         camBuildStrip();
         camSyncTelemetry();
@@ -3130,17 +2638,15 @@ async function boot() {
   $('btn-clip').innerHTML = icon('clipping');
   $('btn-more').innerHTML = icon('more');
 
-  const lib = $('file-library'), cam = $('file-camera'), ref = $('file-ref');
+  const lib = $('file-library'), cam = $('file-camera');
   const pick = (input) => { input.value = ''; input.click(); };
   $('btn-import').addEventListener('click', () => pick(lib));
   $('btn-choose').addEventListener('click', () => pick(lib));
   $('btn-take').addEventListener('click', () => openLiveCamera());
   $('btn-live-cam').addEventListener('click', () => openLiveCamera());
   $('btn-sample')?.addEventListener('click', loadSamplePhoto);
-  $('btn-empty-match')?.addEventListener('click', () => pick(ref));
   $('brand-home')?.addEventListener('click', (e) => { e.preventDefault(); if (S.proxy) openFilmInfo(); });
   for (const input of [lib, cam]) input.addEventListener('change', () => importFile(input.files && input.files[0]));
-  ref.addEventListener('change', () => { const f = ref.files && ref.files[0]; ref.value = ''; startMatch(f); });
 
   $('btn-undo').addEventListener('click', doUndo);
   $('btn-redo').addEventListener('click', doRedo);
@@ -3164,8 +2670,6 @@ async function boot() {
   if (M.films.getFilm(state.filmId)?.id !== state.filmId) state.filmId = M.films.DEFAULT_FILM_ID;
   if (M.cameras.getCamera(state.cameraId)?.id !== state.cameraId) state.cameraId = M.cameras.DEFAULT_CAMERA_ID;
   if (!['warm', 'prism'].includes(state.leakStyle)) state.leakStyle = 'warm';
-  if (!M.looks) { state.lookId = null; state.lookFilm = null; }
-  if (state.lookFilm && typeof state.lookFilm !== 'object') state.lookFilm = null;
 
   try {
     S.renderer = new M.renderer.Renderer(view);
@@ -3190,7 +2694,6 @@ async function boot() {
   S.scope.el.hidden = !S.scopeOn;
   $('scope-slot')?.append(S.scope.el);
 
-  buildLooksPane();
   buildFilmPane();
   buildCameraPane();
   buildEffectsPane();
@@ -3226,10 +2729,8 @@ async function boot() {
     requestRender();
   };
   Object.defineProperty(window, '__c41', { value: {
-    state: () => state, S, M, missing, importFile, setState, startExport, startMatch,
+    state: () => state, S, M, missing, importFile, setState, startExport,
     loadSamplePhoto, runAutoDevelop, doUndo, doRedo, openLiveCamera, closeLiveCamera,
-    applyLook: (id) => { const l = M.looks?.getLook(id, customLooks); if (l) applyLook(l); return !!l; },
-    customLooks: () => customLooks,
   } });
 }
 
