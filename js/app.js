@@ -2039,9 +2039,6 @@ const CAM = {
   layoutKey: '',
   layout: null,
   frame: null,
-  mapTimer: 0,
-  tinyCanvas: null,
-  maps: null,
   evSlider: null,
   roll: [],            // [{ file, thumbUrl }]
   lastShot: null,
@@ -2252,7 +2249,7 @@ function camEnsureAssets(vw, vh) {
   }
 }
 
-function camTick(now) {
+function camTick() {
   if (!CAM.open) return;
   CAM.raf = requestAnimationFrame(camTick);
   if (CAM.frozen || !CAM.live?.ready || !CAM.renderer) return;
@@ -2264,26 +2261,11 @@ function camTick(now) {
   CAM.renderer.updateLiveSource(CAM.live.source, needsMip);
   camEnsureAssets(vw, vh);
 
-  // Lightweight 5Hz micro-highlight map for real-time halation & bloom in viewfinder
-  const fp = film().params || {};
-  const needsGlow = ((fp.halation?.amount || 0) * state.halation > 0.01) || ((fp.bloom || 0) > 0.01) || ((c.params?.bloom || 0) > 0.01) || ((c.params?.spherical || 0) > 0.01);
-  if (needsGlow && M.maps && now - CAM.mapTimer > 200) {
-    CAM.mapTimer = now;
-    if (!CAM.tinyCanvas) CAM.tinyCanvas = mkCanvas(64, 48);
-    const th = Math.max(24, Math.round(64 * vh / vw));
-    if (CAM.tinyCanvas.height !== th) CAM.tinyCanvas.height = th;
-    const tg = CAM.tinyCanvas.getContext('2d');
-    if (CAM.live.mirrored) { tg.save(); tg.translate(64, 0); tg.scale(-1, 1); tg.drawImage(CAM.live.source, 0, 0, 64, th); tg.restore(); }
-    else tg.drawImage(CAM.live.source, 0, 0, 64, th);
-    if (CAM.maps) { releaseCanvas(CAM.maps.hmap); releaseCanvas(CAM.maps.bmap); }
-    CAM.maps = M.maps.buildMaps(CAM.tinyCanvas, { skipFlare: true });
-    CAM.renderer.setMaps({ hmap: CAM.maps.hmap, bmap: CAM.maps.bmap });
-  }
-
   const cv = $('cam-view');
   const w0 = cv.width, h0 = cv.height;
   CAM.renderer.setParams(buildParams({
     layout: CAM.layout,
+    halation: 0,
     flare: 0,
     flarePoint: { x: 0.5, y: 0.3, strength: 0 },
     flipH: !!CAM.live.mirrored,
@@ -2431,8 +2413,6 @@ function closeLiveCamera() {
   if (CAM.raf) { cancelAnimationFrame(CAM.raf); CAM.raf = 0; }
   CAM.live?.stop();
   if (CAM.frame) { releaseCanvas(CAM.frame.canvas); CAM.frame = null; }
-  if (CAM.maps) { releaseCanvas(CAM.maps.hmap); releaseCanvas(CAM.maps.bmap); CAM.maps = null; }
-  if (CAM.tinyCanvas) { releaseCanvas(CAM.tinyCanvas); CAM.tinyCanvas = null; }
   if (CAM.renderer) { CAM.renderer.dispose(); CAM.renderer = null; }
   const cv = $('cam-view');
   if (cv) { cv.width = 0; cv.height = 0; }
@@ -2586,25 +2566,23 @@ function initKeyboard() {
 
 function registerSW() {
   if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
-  let userReload = false;
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (userReload) location.reload();
-  });
-  navigator.serviceWorker.register('sw.js').then((reg) => {
-    const prompt = (w) => {
-      toast('Update ready', {
+    if (reloaded || !hadController) return;
+    if (!S.proxy && !CAM.open) {
+      reloaded = true;
+      location.reload();
+    } else {
+      toast('Update installed', {
         action: 'Reload', duration: 0,
-        onAction: () => { userReload = true; w.postMessage({ type: 'SKIP_WAITING' }); },
+        onAction: () => { reloaded = true; location.reload(); },
       });
-    };
-    if (reg.waiting && navigator.serviceWorker.controller) prompt(reg.waiting);
-    reg.addEventListener('updatefound', () => {
-      const nw = reg.installing;
-      if (!nw) return;
-      nw.addEventListener('statechange', () => {
-        if (nw.state === 'installed' && navigator.serviceWorker.controller) prompt(nw);
-      });
-    });
+    }
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+    reg.update().catch(() => {});
+    if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') reg.update().catch(() => {});
     });

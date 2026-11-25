@@ -1,6 +1,6 @@
-// C41 service worker — versioned app-shell precache, cache-first, offline navigation fallback.
-// Bump CACHE_VERSION whenever any shell file changes so clients pick up the update.
-const CACHE_VERSION = 'c41-v15';
+// C41 service worker — network-first with versioned offline app-shell cache fallback.
+// Online reloads always receive the latest deployed files immediately; offline works from cache.
+const CACHE_VERSION = 'c41-v16';
 const SHELL = [
   './',
   'index.html',
@@ -41,6 +41,7 @@ self.addEventListener('install', (event) => {
         if (res.ok) await cache.put(path, res);
       } catch { /* offline during install — will be runtime-cached later */ }
     }));
+    await self.skipWaiting();
   })());
 });
 
@@ -65,11 +66,13 @@ self.addEventListener('fetch', (event) => {
   if (req.mode === 'navigate') {
     event.respondWith((async () => {
       const cache = await caches.open(CACHE_VERSION);
-      const cached = await cache.match(req, { ignoreSearch: true }) || await cache.match('index.html') || await cache.match('./');
-      if (cached) return cached;
       try {
-        return await fetch(req);
+        const res = await fetch(req);
+        if (res.ok) cache.put('index.html', res.clone()).catch(() => {});
+        return res;
       } catch {
+        const cached = await cache.match(req, { ignoreSearch: true }) || await cache.match('index.html') || await cache.match('./');
+        if (cached) return cached;
         return new Response('<!doctype html><meta name="viewport" content="width=device-width"><body style="background:#0b0a09;color:#eee;font-family:system-ui;padding:24px">C41 is offline and not cached yet.</body>', { headers: { 'Content-Type': 'text/html' } });
       }
     })());
@@ -78,13 +81,13 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_VERSION);
-    const cached = await cache.match(req, { ignoreSearch: true });
-    if (cached) return cached;
     try {
       const res = await fetch(req);
       if (res.ok && res.type === 'basic') cache.put(req, res.clone()).catch(() => {});
       return res;
-    } catch (e) {
+    } catch {
+      const cached = await cache.match(req, { ignoreSearch: true });
+      if (cached) return cached;
       return new Response('', { status: 504, statusText: 'Offline' });
     }
   })());
